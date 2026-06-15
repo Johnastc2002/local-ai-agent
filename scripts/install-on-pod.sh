@@ -69,10 +69,21 @@ pip install -q -r requirements.txt
 echo "Running unit tests..."
 python -m unittest discover -s tests -p 'test_*.py' -q
 
+min_ver="${VLLM_MIN_VERSION:-}"
 if ! python -c "import vllm" 2>/dev/null; then
   echo "Installing vLLM (first time — may take several minutes)..."
-  pip install -q vllm
+  pip install -q "vllm>=${min_ver:-0.17.0}"
+elif [[ -n "$min_ver" ]]; then
+  if ! python -c "
+import vllm
+from packaging import version
+assert version.parse(vllm.__version__) >= version.parse('${min_ver}')
+" 2>/dev/null; then
+    echo "Upgrading vLLM to >= ${min_ver}..."
+    pip install -q "vllm>=${min_ver}"
+  fi
 fi
+python -c "import vllm; print(f'vLLM {vllm.__version__}')"
 
 vllm_port="${RUNPOD_PORT:-8000}"
 want_len="${MAX_MODEL_LEN:-8192}"
@@ -109,11 +120,15 @@ if [[ "$need_vllm_start" -eq 1 ]]; then
 
   vllm_args=(
     serve "$MODEL_NAME"
-    --max-model-len "${want_len}"
     --gpu-memory-utilization "${GPU_MEMORY_UTILIZATION:-0.90}"
     --host 0.0.0.0
     --port "$vllm_port"
   )
+  if [[ "${MAX_MODEL_LEN}" == "-1" ]]; then
+    vllm_args+=(--max-model-len -1)
+  else
+    vllm_args+=(--max-model-len "${want_len}")
+  fi
   if [[ -n "${TOOL_CALL_PARSER:-}" ]]; then
     vllm_args+=(--tool-call-parser "$TOOL_CALL_PARSER")
   fi
@@ -129,16 +144,21 @@ if [[ "$need_vllm_start" -eq 1 ]]; then
   if [[ "${VLLM_LANGUAGE_MODEL_ONLY:-}" == "true" ]]; then
     vllm_args+=(--language-model-only)
   fi
+  if [[ "${VLLM_ENFORCE_EAGER:-}" == "true" ]]; then
+    vllm_args+=(--enforce-eager)
+  fi
   if [[ -n "${VLLM_TENSOR_PARALLEL_SIZE:-}" && "${VLLM_TENSOR_PARALLEL_SIZE}" -gt 1 ]]; then
     vllm_args+=(--tensor-parallel-size "$VLLM_TENSOR_PARALLEL_SIZE")
   fi
   yarn_file="config/models/${PROFILE}-yarn.json"
-  if [[ -f "$yarn_file" ]]; then
+  if [[ "${VLLM_USE_YARN:-}" == "1" && -f "$yarn_file" ]]; then
     vllm_args+=(--hf-overrides "$(tr -d '\n' <"$yarn_file")")
+    if [[ "${VLLM_ALLOW_LONG_MAX_MODEL_LEN:-}" == "1" ]]; then
+      export VLLM_ALLOW_LONG_MAX_MODEL_LEN=1
+    fi
   fi
-  if [[ "${VLLM_ALLOW_LONG_MAX_MODEL_LEN:-}" == "1" ]]; then
-    export VLLM_ALLOW_LONG_MAX_MODEL_LEN=1
-  fi
+
+  echo "vLLM command: vllm ${vllm_args[*]}"
 
   nohup vllm "${vllm_args[@]}" >"$LOG_DIR/vllm.log" 2>&1 &
   echo $! >"$VLLM_PID"
@@ -156,8 +176,10 @@ if [[ "$need_vllm_start" -eq 1 ]]; then
     sleep 10
   done
   if ! curl -fsS "http://127.0.0.1:${vllm_port}/v1/models" >/dev/null 2>&1; then
-    echo "vLLM not ready — check: tail -f ${LOG_DIR}/vllm.log"
-    tail -20 "$LOG_DIR/vllm.log" || true
+    echo "vLLM not ready — root cause from log:"
+    grep -E "ValueError|RuntimeError|CUDA out of memory|OOM|Failed|error" "$LOG_DIR/vllm.log" | tail -15 || true
+    echo "--- last 30 lines ---"
+    tail -30 "$LOG_DIR/vllm.log" || true
     exit 1
   fi
 fi
