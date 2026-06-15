@@ -208,6 +208,54 @@ def test_tool_stream(base: str, api_key: str, model: str) -> bool:
     return True
 
 
+def test_cursor_zero_max_tokens(base: str, api_key: str, model: str) -> bool:
+    """Tool-result passthrough with max_tokens:0 — must not 502 from vLLM validation."""
+    status, body = post_json(
+        f"{base}/v1/chat/completions",
+        api_key,
+        {
+            "model": model,
+            "max_tokens": 0,
+            "stream": True,
+            "stream_options": {"include_usage": True},
+            "messages": [
+                {"role": "user", "content": "Reply with exactly: ping"},
+                {
+                    "role": "assistant",
+                    "tool_calls": [
+                        {
+                            "id": "call_smoke123",
+                            "type": "function",
+                            "function": {"name": "read_file", "arguments": "{}"},
+                        }
+                    ],
+                },
+                {"role": "tool", "tool_call_id": "call_smoke123", "content": "ok"},
+            ],
+            "tools": [
+                {
+                    "type": "function",
+                    "function": {
+                        "name": "read_file",
+                        "parameters": {"type": "object", "properties": {}},
+                    },
+                }
+            ],
+            "tool_choice": "auto",
+        },
+        stream=True,
+        timeout=120,
+    )
+    if status == 502:
+        print(f"FAIL cursor max_tokens:0 passthrough — HTTP 502: {body[:500]}")
+        return False
+    if status != 200:
+        print(f"FAIL cursor max_tokens:0 passthrough — HTTP {status}: {body[:400]}")
+        return False
+    print("OK  cursor max_tokens:0 passthrough (no vLLM 400)")
+    return True
+
+
 def test_plan_route(base: str, api_key: str, model: str) -> bool:
     print("Plan smoke: ICR via gateway (may take several minutes)...")
     status, body = post_json(
@@ -278,6 +326,8 @@ def main() -> None:
     ok = test_chat(base, api_key, model) and ok
     if not args.chat_only:
         ok = test_tool_stream(base, api_key, model) and ok
+    if args.gateway and not args.chat_only:
+        ok = test_cursor_zero_max_tokens(base, api_key, model) and ok
     if args.plan_smoke:
         if not args.gateway:
             print("--plan-smoke requires --gateway", file=sys.stderr)

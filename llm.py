@@ -122,6 +122,8 @@ def chat_completions(
     env: dict[str, str] | None = None,
 ) -> dict:
     env = env or load_env()
+    from gateway.context_trim import clamp_max_tokens, sanitize_tool_chain
+
     api_key = require("RUNPOD_API_KEY", env)
     model = model or env.get("MODEL_NAME", "Qwen/Qwen3.6-27B")
     url = f"{base_url(env)}/v1/chat/completions"
@@ -129,13 +131,13 @@ def chat_completions(
     full_messages: list[Message] = []
     if system:
         full_messages.append({"role": "system", "content": system})
-    full_messages.extend(messages)
+    full_messages.extend(sanitize_tool_chain(messages))
 
     payload: dict[str, Any] = {
         "model": model,
         "messages": full_messages,
         "temperature": temperature,
-        "max_tokens": max_tokens,
+        "max_tokens": clamp_max_tokens(max_tokens, env),
     }
     if top_p is not None:
         payload["top_p"] = top_p

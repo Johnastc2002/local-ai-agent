@@ -65,6 +65,9 @@ source .venv/bin/activate
 pip install -q -U pip
 pip install -q -r requirements.txt
 
+echo "Running unit tests..."
+python -m unittest discover -s tests -p 'test_*.py' -q
+
 if ! python -c "import vllm" 2>/dev/null; then
   echo "Installing vLLM (first time — may take several minutes)..."
   pip install -q vllm

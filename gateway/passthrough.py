@@ -5,6 +5,7 @@ from __future__ import annotations
 
 import json
 import logging
+import sys
 
 import httpx
 from fastapi import Request, Response
@@ -53,8 +54,15 @@ async def chat_completion_json(body: dict, request: Request) -> dict:
         resp = await client.post(url, headers=_headers(request), json=payload)
         if resp.status_code >= 400:
             detail = resp.text[:2000]
-            log.error("vLLM %s: %s", resp.status_code, detail)
-            raise RuntimeError(f"vLLM HTTP {resp.status_code}: {detail}")
+            log.error(
+                "vLLM %s (max_tokens=%s, messages=%s): %s",
+                resp.status_code,
+                payload.get("max_tokens"),
+                len(payload.get("messages") or []),
+                detail,
+            )
+            print(f"vLLM {resp.status_code}: {detail}", file=sys.stderr)
+            raise RuntimeError(detail)
         return resp.json()
 
 

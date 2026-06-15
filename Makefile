@@ -33,7 +33,7 @@ test-gateway:
 	python3 smoke_test.py --gateway
 
 test-tools:
-	python3 -m unittest tests.test_cursor_tools -v
+	python3 -m unittest discover -s tests -p 'test_*.py' -v
 
 logger:
 	python3 tools/request_logger.py

@@ -20,7 +20,7 @@ import sys
 import traceback
 
 import uvicorn
-from fastapi import FastAPI, Request
+from fastapi import FastAPI, Request, Response
 from fastapi.responses import JSONResponse, StreamingResponse
 
 from gateway.audit_log import log_request
@@ -43,6 +43,33 @@ from gateway.router import find_plan_tool, is_agent_request, stream_chunks, stre
 
 app = FastAPI(title="ICR Gateway", version="1.0")
 log = logging.getLogger("icr.gateway")
+
+
+def _gateway_error_response(exc: Exception) -> JSONResponse:
+    detail = str(exc)
+    if hasattr(exc, "response") and exc.response is not None:
+        try:
+            detail = exc.response.text[:2000]
+        except Exception:
+            pass
+    if isinstance(exc, RuntimeError) and detail:
+        log.error("Gateway request failed: %s", detail)
+        print(f"Gateway request failed: {detail}", file=sys.stderr)
+    else:
+        log.error("Gateway request failed: %s\n%s", detail, traceback.format_exc())
+        print(f"Gateway request failed: {detail}", file=sys.stderr)
+        traceback.print_exc()
+    return JSONResponse(
+        {"error": {"message": detail, "type": "gateway_error"}},
+        status_code=502,
+    )
+
+
+async def _forward_chat(body: dict, request: Request) -> Response:
+    try:
+        return await forward_chat_completion(body, request)
+    except Exception as exc:
+        return _gateway_error_response(exc)
 
 
 def _paused_response(body: dict, completion: dict) -> JSONResponse | StreamingResponse:
@@ -80,7 +107,7 @@ async def chat_completions(request: Request):
         return await forward("POST", "/v1/chat/completions", request, raw)
 
     if icr_mode() == "off":
-        return await forward_chat_completion(body, request)
+        return await _forward_chat(body, request)
 
     log_request(body)
     plan_tool = find_plan_tool(body.get("tools"))
@@ -97,17 +124,17 @@ async def chat_completions(request: Request):
                     return JSONResponse(completion)
                 if is_agent_request(body):
                     enriched = enrich_body_with_icr(body, state)
-                    return await forward_chat_completion(enriched, request)
+                    return await _forward_chat(enriched, request)
                 completion = finish_icr(body, state, None)
                 if body.get("stream"):
                     return StreamingResponse(iter(stream_text_chunks(completion)), media_type="text/event-stream")
                 return JSONResponse(completion)
             except IcrPaused as paused:
                 return _paused_response(body, paused.completion)
-        return await forward_chat_completion(body, request)
+        return await _forward_chat(body, request)
 
     if not is_user_turn(body):
-        return await forward_chat_completion(body, request)
+        return await _forward_chat(body, request)
 
     try:
         if plan_tool:
@@ -120,7 +147,7 @@ async def chat_completions(request: Request):
         if is_agent_request(body):
             state = await asyncio.to_thread(run_icr_state, body)
             enriched = enrich_body_with_icr(body, state)
-            return await forward_chat_completion(enriched, request)
+            return await _forward_chat(enriched, request)
 
         if body.get("stream"):
             chunks = await asyncio.to_thread(run_icr_answer_stream, body)
@@ -130,19 +157,7 @@ async def chat_completions(request: Request):
     except IcrPaused as paused:
         return _paused_response(body, paused.completion)
     except Exception as exc:
-        detail = str(exc)
-        if hasattr(exc, "response") and exc.response is not None:
-            try:
-                detail = exc.response.text[:2000]
-            except Exception:
-                pass
-        log.error("ICR pipeline failed: %s\n%s", detail, traceback.format_exc())
-        print(f"ICR pipeline failed: {detail}", file=sys.stderr)
-        traceback.print_exc()
-        return JSONResponse(
-            {"error": {"message": f"ICR pipeline failed: {detail}", "type": "icr_error"}},
-            status_code=502,
-        )
+        return _gateway_error_response(exc)
 
 
 @app.api_route("/{path:path}", methods=["GET", "POST", "PUT", "DELETE"])

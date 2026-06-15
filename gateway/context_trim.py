@@ -3,7 +3,22 @@
 
 from __future__ import annotations
 
+from typing import Any
+
 from llm import Message, content_to_text, load_env
+
+
+def clamp_max_tokens(value: Any, env: dict | None = None) -> int:
+    """vLLM rejects max_tokens < 1; Cursor often sends 0."""
+    env = env or load_env()
+    default = int(env.get("REFINE_MAX_TOKENS", "2048"))
+    try:
+        n = int(value) if value is not None else 0
+    except (TypeError, ValueError):
+        n = 0
+    if n < 1:
+        n = default
+    return min(n, 8192)
 
 
 def estimate_tokens(text: str) -> int:
@@ -146,15 +161,108 @@ def trim_agent_history(
 
 
 def trim_body_for_vllm(body: dict, env: dict | None = None) -> dict:
-    """Trim full Cursor request before vLLM (Agent passthrough after ICR)."""
+    """Normalize + trim full Cursor request before vLLM (all Agent passthrough paths)."""
     env = env or load_env()
-    max_out = body.get("max_tokens")
-    if not max_out or int(max_out) < 1:
-        max_out = int(env.get("REFINE_MAX_TOKENS", "2048"))
-    max_out = min(int(max_out), 8192)
+    raw_out = body.get("max_tokens", body.get("max_completion_tokens"))
+    max_out = clamp_max_tokens(raw_out, env)
     budget = context_input_budget(env, max_output=max_out)
-    messages = trim_conversation_tail(body.get("messages") or [], budget)
-    return {**body, "messages": messages, "max_tokens": max_out, "stream": False}
+    messages = sanitize_tool_chain(trim_conversation_tail(body.get("messages") or [], budget))
+    messages = ensure_non_empty_messages(messages)
+    return build_vllm_chat_payload(body, messages=messages, max_tokens=max_out, stream=False)
+
+
+# Fields vLLM accepts on /v1/chat/completions — drop Cursor extras (e.g. stream_options).
+_VLLM_CHAT_FIELDS = (
+    "model",
+    "messages",
+    "max_tokens",
+    "stream",
+    "temperature",
+    "top_p",
+    "tools",
+    "tool_choice",
+    "parallel_tool_calls",
+    "stop",
+    "presence_penalty",
+    "frequency_penalty",
+    "seed",
+    "response_format",
+    "logprobs",
+    "top_logprobs",
+    "n",
+    "user",
+)
+
+
+def build_vllm_chat_payload(
+    body: dict,
+    *,
+    messages: list[Message],
+    max_tokens: int,
+    stream: bool,
+) -> dict:
+    """Build a vLLM-safe payload; strip stream_options and other invalid Cursor fields."""
+    out: dict[str, Any] = {
+        "model": body.get("model"),
+        "messages": messages,
+        "max_tokens": max_tokens,
+        "stream": stream,
+    }
+    for key in _VLLM_CHAT_FIELDS:
+        if key in ("model", "messages", "max_tokens", "stream"):
+            continue
+        if key in body:
+            out[key] = body[key]
+    if not stream:
+        out.pop("stream_options", None)
+    return out
+
+
+def ensure_non_empty_messages(messages: list[Message]) -> list[Message]:
+    if messages:
+        return messages
+    return [{"role": "user", "content": ""}]
+
+
+def _strip_incomplete_tool_calls(fixed: list[Message]) -> None:
+    for k in range(len(fixed) - 1, -1, -1):
+        if fixed[k].get("role") == "assistant" and fixed[k].get("tool_calls"):
+            item = dict(fixed[k])
+            item.pop("tool_calls", None)
+            if not item.get("content"):
+                item["content"] = ""
+            fixed[k] = item
+            return
+
+
+def sanitize_tool_chain(messages: list[Message]) -> list[Message]:
+    """Drop orphan tool messages and broken tool_calls pairs vLLM rejects with 400."""
+    if not messages:
+        return []
+    fixed: list[Message] = []
+    pending: set[str] = set()
+    for msg in messages:
+        role = msg.get("role")
+        if role == "assistant":
+            if pending and fixed:
+                _strip_incomplete_tool_calls(fixed)
+            item = dict(msg)
+            tcs = item.get("tool_calls") or []
+            pending = {tc.get("id") for tc in tcs if tc.get("id")}
+            fixed.append(item)
+        elif role == "tool":
+            tid = msg.get("tool_call_id")
+            if tid and tid in pending:
+                fixed.append(dict(msg))
+                pending.discard(tid)
+        else:
+            if pending and fixed:
+                _strip_incomplete_tool_calls(fixed)
+            pending = set()
+            fixed.append(dict(msg))
+    if pending and fixed:
+        _strip_incomplete_tool_calls(fixed)
+    return fixed
 
 
 def trim_seed_from_cursor(body: dict, env: dict | None = None) -> list[Message]:
