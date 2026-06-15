@@ -58,6 +58,8 @@ echo "Profile: $PROFILE"
 echo "Model:   $MODEL_NAME"
 echo "ICR:     $ICR_HOST"
 
+bash "$ROOT/scripts/check-gpu-env.sh"
+
 if [[ ! -d .venv ]]; then
   python3 -m venv .venv
 fi
@@ -69,21 +71,19 @@ pip install -q -r requirements.txt
 echo "Running unit tests..."
 python -m unittest discover -s tests -p 'test_*.py' -q
 
-min_ver="${VLLM_MIN_VERSION:-}"
+need_vllm_install=0
 if ! python -c "import vllm" 2>/dev/null; then
+  need_vllm_install=1
+elif ! python -c "import torch; assert torch.cuda.is_available()" 2>/dev/null; then
+  echo "Broken vLLM/torch (CUDA unavailable) — reinstalling..."
+  need_vllm_install=1
+fi
+if [[ "$need_vllm_install" -eq 1 ]]; then
   echo "Installing vLLM (first time — may take several minutes)..."
-  pip install -q "vllm>=${min_ver:-0.17.0}"
-elif [[ -n "$min_ver" ]]; then
-  if ! python -c "
-import vllm
-from packaging import version
-assert version.parse(vllm.__version__) >= version.parse('${min_ver}')
-" 2>/dev/null; then
-    echo "Upgrading vLLM to >= ${min_ver}..."
-    pip install -q "vllm>=${min_ver}"
-  fi
+  bash "$ROOT/scripts/install-vllm.sh"
 fi
 python -c "import vllm; print(f'vLLM {vllm.__version__}')"
+export VLLM_WORKER_MULTIPROC_METHOD=spawn
 
 vllm_port="${RUNPOD_PORT:-8000}"
 want_len="${MAX_MODEL_LEN:-8192}"

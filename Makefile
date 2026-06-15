@@ -55,7 +55,7 @@ mn=re.search(r'^MODEL_NAME=(.+)', lines, re.M); print('Custom model:        ', m
 
 pod-up:
 	@echo "=== RunPod pod template ==="
-	@echo "  Image:   runpod/pytorch:2.4.0-py3.11-cuda12.4.1-devel-ubuntu22.04"
+	@echo "  Image:   runpod/pytorch:1.0.2-cu1281-torch280-ubuntu2404  (NOT cuda12.4 — too old for vLLM)"
 	@echo "  Volume:  /workspace (80 GB)"
 	@echo "  Ports:   8000,8787"
 	@echo ""

@@ -29,7 +29,7 @@ Cursor (Mac) ──BYOK :8787──► RunPod pod
 
 | Setting | Value |
 |---------|--------|
-| **Image** | `runpod/pytorch:2.4.0-py3.11-cuda12.4.1-devel-ubuntu22.04` |
+| **Image** | `runpod/pytorch:1.0.2-cu1281-torch280-ubuntu2404` (needs host driver ≥ 12.9; run `bash scripts/check-gpu-env.sh` first) |
 | **Container disk** | 40 GB |
 | **Volume disk** | 80 GB |
 | **Volume mount** | `/workspace` |
