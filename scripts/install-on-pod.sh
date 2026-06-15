@@ -50,6 +50,8 @@ export ICR_REPO="$ICR_HOST"
 export GATEWAY_ON_POD=1
 export VLLM_UPSTREAM="${VLLM_UPSTREAM:-http://127.0.0.1:${RUNPOD_PORT:-8000}}"
 export PROXY_PORT="${GATEWAY_PORT:-8787}"
+# vLLM on localhost does not validate this; llm.py still requires a value
+export RUNPOD_API_KEY="${RUNPOD_API_KEY:-local}"
 
 echo "Profile: $PROFILE"
 echo "Model:   $MODEL_NAME"
@@ -114,7 +116,14 @@ echo "Starting gateway on :${PROXY_PORT} (log: ${LOG_DIR}/gateway.log)"
 nohup python -m gateway.app >"$LOG_DIR/gateway.log" 2>&1 &
 echo $! >"$GATEWAY_PID"
 
-sleep 2
+echo "Waiting for gateway..."
+for _ in $(seq 1 30); do
+  if curl -fsS "http://127.0.0.1:${PROXY_PORT}/health" >/dev/null 2>&1; then
+    echo "Gateway ready."
+    break
+  fi
+  sleep 2
+done
 if curl -fsS "http://127.0.0.1:${PROXY_PORT}/health" >/dev/null 2>&1; then
   echo ""
   echo "=== Pod ready ==="
