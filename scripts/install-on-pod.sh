@@ -29,8 +29,8 @@ fi
 export ICR_REPO_HOST="$ICR_HOST"
 
 if ! command -v docker >/dev/null; then
-  echo "Docker not found on pod"
-  exit 1
+  echo "Docker not found — using native install (normal on RunPod PyTorch pods)."
+  exec bash "$ROOT/scripts/install-on-pod-native.sh"
 fi
 
 echo "Profile: $PROFILE"

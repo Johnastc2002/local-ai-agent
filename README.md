@@ -29,7 +29,7 @@ cp .env.example .env
 bash scripts/install-on-pod.sh
 ```
 
-That runs **Docker Compose**: vLLM (:8000) + ICR gateway (:8787). First boot downloads the model (5–15 min).
+That starts **vLLM** (:8000) + **ICR gateway** (:8787). RunPod PyTorch pods have no Docker — install uses native Python automatically. First boot downloads the model (5–15 min).
 
 Production model on pod:
 

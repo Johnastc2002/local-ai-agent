@@ -36,7 +36,7 @@ Use this document to set up and test **Cursor + RunPod + ICR gateway** from scra
 | **Cursor Pro** | Required for BYOK |
 | **RunPod account** | Dedicated pod (not serverless for this setup) |
 | **RunPod API key** | Settings → API Keys |
-| **Pod with Docker + NVIDIA GPU** | Compose runs vLLM + gateway |
+| **Pod with NVIDIA GPU** | Native vLLM + gateway (Docker optional) |
 | **Pod ports exposed** | **8000** (vLLM), **8787** (gateway) |
 | **Git on pod** | To clone this repo |
 | **Mac terminal** | For `make start`, `make ready`, etc. |
@@ -75,7 +75,7 @@ Ensure the pod template exposes:
 | **8000** | vLLM |
 | **8787** | ICR gateway |
 
-GPU must be available to Docker (`nvidia-container-runtime`).
+Standard **RunPod PyTorch** pods have no Docker — `install-on-pod.sh` falls back to native vLLM + Python gateway automatically.
 
 ### 4.2 Mac — `.env`
 
@@ -115,16 +115,16 @@ bash scripts/install-on-pod.sh
 What this does:
 
 1. Clones **Iterative-Contextual-Refinements** to `/workspace/Iterative-Contextual-Refinements` if missing (ICR prompts).
-2. Runs **Docker Compose**: `vllm` + `gateway` containers.
+2. Starts **vLLM** on `:8000` and **ICR gateway** on `:8787` (native Python, or Docker Compose if Docker exists).
 3. First boot downloads the model — **allow 5–15 minutes**.
 
 Check status on pod:
 
 ```bash
 cd /workspace/local-ai-agent
-docker compose ps
-docker compose logs -f vllm      # model loading
-docker compose logs -f gateway   # gateway ready
+curl -fsS http://127.0.0.1:8000/v1/models | head
+curl -fsS http://127.0.0.1:8787/health
+tail -f runs/vllm.log runs/gateway.log
 ```
 
 **After pod reboot**, run install again (or add compose to pod start command):
