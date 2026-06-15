@@ -24,24 +24,28 @@ if pod_model_is_cached && [[ "${FORCE:-}" != "1" ]]; then
   exit 0
 fi
 
-pip install -q -U pip huggingface_hub
+pip install -U pip huggingface_hub tqdm
+if pip install hf_transfer 2>/dev/null; then
+  export HF_HUB_ENABLE_HF_TRANSFER=1
+  echo "Using hf_transfer (parallel downloads)"
+else
+  echo "hf_transfer not available — standard download"
+fi
 
-echo "Downloading (resume supported) — can take 10–30 min for 27B..."
-python3 - <<PY
-import os
-from huggingface_hub import snapshot_download
-
-model = os.environ["MODEL_NAME"]
-cache = os.environ["HUGGINGFACE_HUB_CACHE"]
-path = snapshot_download(
-    repo_id=model,
-    cache_dir=cache,
-    resume_download=True,
-)
-print(f"Done: {path}")
-PY
+export HF_HUB_DISABLE_PROGRESS_BARS=0
 
 echo ""
+echo "Downloading (per-file progress below; resume supported)..."
+echo "Tip: open a second terminal and run: watch -n5 du -sh $HUGGINGFACE_HUB_CACHE"
+echo ""
+
+huggingface-cli download "$MODEL_NAME" \
+  --cache-dir "$HUGGINGFACE_HUB_CACHE" \
+  --resume-download \
+  --max-workers 8
+
+echo ""
+echo "Done."
 echo "Cache size:"
 du -sh "$HUGGINGFACE_HUB_CACHE" 2>/dev/null || true
 echo ""
