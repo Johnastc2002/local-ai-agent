@@ -140,6 +140,20 @@ def _agent(
     *args,
     **kwargs,
 ) -> AgentCallResult:
+    from gateway.context_trim import context_input_budget, estimate_tokens, trim_agent_history
+    from llm import load_env
+
+    if len(args) >= 3:
+        messages = list(args[1])
+        system_prompt = args[2]
+        env = kwargs.get("env") or load_env()
+        budget = context_input_budget(env)
+        messages = trim_agent_history(
+            messages,
+            budget,
+            system_reserve=estimate_tokens(system_prompt) + 512,
+        )
+        args = (args[0], messages, *args[2:])
     try:
         return call_contextual_agent(*args, **kwargs)
     except CursorToolPause as exc:
@@ -307,6 +321,7 @@ def run_contextual_loop(
             critique_result = resume_agent[1]
             resume_agent = None
         elif not skip_critique:
+            print("[2/4] Iterative Agent...", file=sys.stderr)
             iterative_msgs.append(user_message(
                 "Please critique the solution and tool executions you just generated above. "
                 "If no tools were used, critique the generation text."

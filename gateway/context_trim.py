@@ -74,7 +74,30 @@ def trim_messages(messages: list[Message], budget_tokens: int) -> list[Message]:
     return out
 
 
-def trim_seed_from_cursor(body: dict, env: dict | None = None) -> list[Message]:
+def trim_agent_history(
+    messages: list[Message],
+    budget_tokens: int,
+    *,
+    system_reserve: int = 0,
+) -> list[Message]:
+    """Keep the newest messages (incl. assistant) within token budget."""
+    budget = max(1024, budget_tokens - system_reserve)
+    kept_rev: list[Message] = []
+    used = 0
+    for msg in reversed(messages):
+        text = content_to_text(msg.get("content"))
+        need = estimate_tokens(text)
+        if used + need > budget and kept_rev:
+            break
+        item = dict(msg)
+        if used + need > budget:
+            char_budget = max(400, (budget - used) * 4)
+            item["content"] = text[:char_budget] + "\n[... truncated ...]"
+            need = estimate_tokens(item["content"])
+        kept_rev.append(item)
+        used += need
+    kept_rev.reverse()
+    return kept_rev if kept_rev else [dict(messages[-1])]
     from gateway.cursor_protocol import seed_messages_from_cursor
 
     env = env or load_env()

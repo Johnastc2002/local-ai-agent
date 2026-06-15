@@ -15,7 +15,9 @@ from __future__ import annotations
 
 import asyncio
 import json
+import logging
 import sys
+import traceback
 
 import uvicorn
 from fastapi import FastAPI, Request
@@ -40,6 +42,7 @@ from gateway.passthrough import forward, forward_chat_completion
 from gateway.router import find_plan_tool, is_agent_request, stream_chunks, stream_text_chunks
 
 app = FastAPI(title="ICR Gateway", version="1.0")
+log = logging.getLogger("icr.gateway")
 
 
 def _paused_response(body: dict, completion: dict) -> JSONResponse | StreamingResponse:
@@ -127,6 +130,9 @@ async def chat_completions(request: Request):
     except IcrPaused as paused:
         return _paused_response(body, paused.completion)
     except Exception as exc:
+        log.error("ICR pipeline failed: %s\n%s", exc, traceback.format_exc())
+        print(f"ICR pipeline failed: {exc}", file=sys.stderr)
+        traceback.print_exc()
         return JSONResponse(
             {"error": {"message": f"ICR pipeline failed: {exc}", "type": "icr_error"}},
             status_code=502,
