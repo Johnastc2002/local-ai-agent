@@ -157,7 +157,9 @@ def _agent(
     try:
         return call_contextual_agent(*args, **kwargs)
     except CursorToolPause as exc:
-        exc.loop_snapshot = _loop_snapshot(phase=phase, **snapshot_kwargs)
+        # snapshot_kwargs is already the checkpoint dict from snap(...)
+        exc.loop_snapshot = dict(snapshot_kwargs)
+        exc.loop_snapshot["phase"] = phase
         raise
 
 
