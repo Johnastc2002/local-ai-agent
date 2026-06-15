@@ -35,7 +35,7 @@ def is_user_turn(body: dict) -> bool:
 
 
 def is_agent_request(body: dict) -> bool:
-    """Agent/Ask with tools, but not Cursor Plan (CreatePlan)."""
+    """Agent with Cursor tools, but not Plan (CreatePlan)."""
     tools = body.get("tools") or []
     return bool(tools) and find_plan_tool(tools) is None
 

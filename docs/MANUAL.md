@@ -70,25 +70,22 @@ bash scripts/install-on-pod.sh
 
 The script creates `.env`, clones ICR prompts, clones **your codebase** (see §3b), installs vLLM, starts both services.
 
-### 3b. Codebase on pod (required)
+### 3b. How ICR gets your code (standard Cursor protocol)
 
-ICR agents use `read_file`, `grep`, and `list_dir` on the pod — same idea as Opus reading your repo in Cursor.
+**No pod clone required.** Cursor BYOK already sends:
 
-On pod `.env`:
+- **System + user messages** — rules, `@files`, codebase context Cursor indexed on your Mac
+- **`tools[]`** — `read_file`, `grep`, MCP tools, etc.
 
-```bash
-CODEBASE_ROOT=/workspace/bobot-xs-v1
-CODEBASE_HOST_ROOT=/Users/tough/hobby/bobot-xs-v1   # Mac paths from Cursor → pod
-CODEBASE_GIT_URL=https://github.com/you/bobot-xs-v1.git   # optional auto-clone
-```
+The gateway passes those through to each ICR agent. When the model calls a Cursor tool:
 
-Or clone manually once:
+1. Gateway returns `tool_calls` to Cursor (same as Opus)
+2. **Cursor executes on your Mac** and sends tool results back
+3. Gateway **resumes** the ICR loop
 
-```bash
-git clone https://github.com/you/bobot-xs-v1.git /workspace/bobot-xs-v1
-```
+Enable MCP in Cursor if you use it (`.cursor/mcp.json`). Plan mode includes MCP tools when configured.
 
-Without this, ICR runs blind and **will fail** with `CODEBASE_ROOT is missing`.
+Optional fallback only: set `CODEBASE_ROOT` + `REFINE_CODEBASE_TOOLS=auto` to read a git clone on the pod — **not the normal path**.
 
 **First boot:** model download takes **5–15 minutes**. Watch:
 

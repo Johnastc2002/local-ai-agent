@@ -24,7 +24,7 @@ from dataclasses import asdict, dataclass, field
 from datetime import datetime, timezone
 from pathlib import Path
 
-from agent_call import AgentCallResult, call_contextual_agent
+from agent_call import AgentCallResult, CursorToolPause, call_contextual_agent
 from attachments import build_initial_user_content, load_seed_images
 from icr_prompts import load_icr_prompts
 from llm import Message, user_message
@@ -73,6 +73,80 @@ def _prompt_text(result: AgentCallResult) -> str:
     return result.prompt_text or result.text
 
 
+def _loop_snapshot(
+    *,
+    phase: str,
+    task: str,
+    state: RefineState,
+    main_msgs: list[Message],
+    iterative_msgs: list[Message],
+    strategic_msgs: list[Message],
+    iteration: int,
+    turns_since_condense: int,
+    run_id: str,
+    run_dir: Path,
+    prompts: dict[str, str],
+    env: dict[str, str],
+    max_iterations: int,
+    memory_every: int,
+    pool_size: int,
+    temperature: float,
+    top_p: float,
+    max_tokens: int,
+    seed_images: list[dict],
+    cursor_tools: list[dict] | None,
+    cursor_body: dict | None,
+    seed_messages: list[Message] | None,
+    main_prompt_text: str = "",
+    suggestions_prompt_text: str = "",
+    main_loop_messages: list[Message] | None = None,
+    suggestions_loop_messages: list[Message] | None = None,
+    strat_loop_messages: list[Message] | None = None,
+) -> dict:
+    return {
+        "phase": phase,
+        "task": task,
+        "state": asdict(state),
+        "main_msgs": main_msgs,
+        "iterative_msgs": iterative_msgs,
+        "strategic_msgs": strategic_msgs,
+        "iteration": iteration,
+        "turns_since_condense": turns_since_condense,
+        "run_id": run_id,
+        "run_dir": str(run_dir),
+        "prompts": prompts,
+        "env": env,
+        "max_iterations": max_iterations,
+        "memory_every": memory_every,
+        "pool_size": pool_size,
+        "temperature": temperature,
+        "top_p": top_p,
+        "max_tokens": max_tokens,
+        "seed_images": seed_images,
+        "cursor_tools": cursor_tools or [],
+        "cursor_body": cursor_body or {},
+        "seed_messages": seed_messages or [],
+        "main_prompt_text": main_prompt_text,
+        "suggestions_prompt_text": suggestions_prompt_text,
+        "main_loop_messages": main_loop_messages or [],
+        "suggestions_loop_messages": suggestions_loop_messages or [],
+        "strat_loop_messages": strat_loop_messages or [],
+    }
+
+
+def _agent(
+    phase: str,
+    snapshot_kwargs: dict,
+    *args,
+    **kwargs,
+) -> AgentCallResult:
+    try:
+        return call_contextual_agent(*args, **kwargs)
+    except CursorToolPause as exc:
+        exc.loop_snapshot = _loop_snapshot(phase=phase, **snapshot_kwargs)
+        raise
+
+
 def run_contextual_loop(
     task: str,
     initial_user_content: str | list,
@@ -88,126 +162,236 @@ def run_contextual_loop(
     temperature: float,
     top_p: float,
     max_tokens: int,
+    seed_messages: list[Message] | None = None,
+    cursor_tools: list[dict] | None = None,
+    cursor_body: dict | None = None,
+    resume_checkpoint: dict | None = None,
+    resume_agent: tuple[str, AgentCallResult] | None = None,
 ) -> RefineState:
-    state = RefineState(task=task, started_at=datetime.now(timezone.utc).isoformat())
+    if resume_checkpoint:
+        ck = resume_checkpoint
+        state = RefineState(**ck["state"])
+        main_msgs = list(ck["main_msgs"])
+        iterative_msgs = list(ck["iterative_msgs"])
+        strategic_msgs = list(ck["strategic_msgs"])
+        iteration = ck["iteration"]
+        turns_since_condense = ck["turns_since_condense"]
+        run_id = ck["run_id"]
+        run_dir = Path(ck["run_dir"])
+        prompts = ck["prompts"]
+        env = ck["env"]
+        max_iterations = ck["max_iterations"]
+        memory_every = ck["memory_every"]
+        pool_size = ck["pool_size"]
+        temperature = ck["temperature"]
+        top_p = ck["top_p"]
+        max_tokens = ck["max_tokens"]
+        seed_images = ck["seed_images"]
+        cursor_tools = ck.get("cursor_tools")
+        cursor_body = ck.get("cursor_body")
+        seed_messages = ck.get("seed_messages")
+        task = ck["task"]
+    else:
+        state = RefineState(task=task, started_at=datetime.now(timezone.utc).isoformat())
+        iteration = 0
+        turns_since_condense = 0
 
-    initial_msg = user_message(initial_user_content)
-    main_msgs: list[Message] = [initial_msg]
-    iterative_msgs: list[Message] = [initial_msg]
-    strategic_msgs: list[Message] = [initial_msg]
+    if not resume_checkpoint:
+        if seed_messages:
+            main_msgs = list(seed_messages)
+            iterative_msgs = list(seed_messages)
+            strategic_msgs = list(seed_messages)
+        else:
+            initial_msg = user_message(initial_user_content)
+            main_msgs = [initial_msg]
+            iterative_msgs = [initial_msg]
+            strategic_msgs = [initial_msg]
 
-    turns_since_condense = 0
-    iteration = 0
+    resuming = resume_agent is not None
+    active_ck = resume_checkpoint
 
     while not _stop_requested:
-        iteration += 1
-        if max_iterations > 0 and iteration > max_iterations:
-            state.status = "completed"
-            state.exit_reason = f"max iterations ({max_iterations})"
-            break
+        if resuming:
+            resuming = False
+        else:
+            iteration += 1
+            if max_iterations > 0 and iteration > max_iterations:
+                state.status = "completed"
+                state.exit_reason = f"max iterations ({max_iterations})"
+                break
 
         state.iteration_count = iteration
         print(f"\n{'='*60}\nIteration {iteration}\n{'='*60}", file=sys.stderr)
 
-        # --- 1: MAIN GENERATOR (ContextualCore.ts L230-272) ---
-        print("[1/4] Main Generator...", file=sys.stderr)
-        main_result = call_contextual_agent(
-            "Main Generator",
-            main_msgs,
-            prompts["main_generator"],
-            session_id=session_id_for_agent(run_id, "main-generator"),
-            seed_images=seed_images,
+        snap = lambda phase, **extra: _loop_snapshot(  # noqa: E731
+            phase=phase,
+            task=task,
+            state=state,
+            main_msgs=main_msgs,
+            iterative_msgs=iterative_msgs,
+            strategic_msgs=strategic_msgs,
+            iteration=iteration,
+            turns_since_condense=turns_since_condense,
+            run_id=run_id,
+            run_dir=run_dir,
+            prompts=prompts,
+            env=env,
+            max_iterations=max_iterations,
+            memory_every=memory_every,
+            pool_size=pool_size,
             temperature=temperature,
             top_p=top_p,
             max_tokens=max_tokens,
-            env=env,
+            seed_images=seed_images,
+            cursor_tools=cursor_tools,
+            cursor_body=cursor_body,
+            seed_messages=seed_messages,
+            **extra,
         )
-        main_generation = main_result.text
-        main_prompt_text = _prompt_text(main_result)
-        main_loop_messages = main_result.loop_messages or [{"role": "assistant", "content": main_generation}]
 
-        if iteration == 1:
-            state.initial_main_generation = main_generation
-        state.current_best_generation = main_generation
-        state.messages.append({
-            "role": "main_generator",
-            "iteration": iteration,
-            "content": main_generation,
-        })
-        state.save(run_dir)
-
-        main_msgs.extend(main_loop_messages)
-        iterative_msgs.extend(main_loop_messages)
-
-        if _stop_requested:
-            break
-
-        # --- 2: ITERATIVE AGENT (L274-304) ---
-        print("[2/4] Iterative Agent...", file=sys.stderr)
-        iterative_msgs.append(user_message(
-            "Please critique the solution and tool executions you just generated above. "
-            "If no tools were used, critique the generation text."
-        ))
-        critique_result = call_contextual_agent(
+        resume_phase = resume_agent[0] if resume_agent else None
+        skip_main = resume_phase in (
             "Iterative Agent",
-            iterative_msgs,
-            prompts["iterative_agent"],
-            session_id=session_id_for_agent(run_id, "iterative-agent"),
-            seed_images=seed_images,
-            temperature=max(0.2, temperature - 0.3),
-            top_p=top_p,
-            max_tokens=max_tokens,
-            env=env,
+            "Strategic Pool Agent",
+            "Memory Agent",
         )
-        suggestions = critique_result.text
-        suggestions_prompt_text = _prompt_text(critique_result)
-        suggestions_loop_messages = critique_result.loop_messages or [{"role": "assistant", "content": suggestions}]
 
-        state.current_best_suggestions = suggestions
-        state.all_iterative_suggestions.append(suggestions)
-        state.messages.append({"role": "iterative_agent", "iteration": iteration, "content": suggestions})
-        iterative_msgs.extend(suggestions_loop_messages)
-        state.save(run_dir)
+        if resume_phase == "Main Generator":
+            main_result = resume_agent[1]
+            resume_agent = None
+        elif not skip_main:
+            print("[1/4] Main Generator...", file=sys.stderr)
+            main_result = _agent(
+                "Main Generator",
+                snap("Main Generator"),
+                "Main Generator",
+                main_msgs,
+                prompts["main_generator"],
+                session_id=session_id_for_agent(run_id, "main-generator"),
+                seed_images=seed_images,
+                cursor_tools=cursor_tools,
+                cursor_body=cursor_body,
+                temperature=temperature,
+                top_p=top_p,
+                max_tokens=max_tokens,
+                env=env,
+            )
+
+        if skip_main and active_ck:
+            main_prompt_text = active_ck.get("main_prompt_text", "")
+            main_loop_messages = active_ck.get("main_loop_messages", [])
+        elif not skip_main:
+            main_generation = main_result.text
+            main_prompt_text = _prompt_text(main_result)
+            main_loop_messages = main_result.loop_messages or [{"role": "assistant", "content": main_generation}]
+
+            if iteration == 1:
+                state.initial_main_generation = main_generation
+            state.current_best_generation = main_generation
+            state.messages.append({
+                "role": "main_generator",
+                "iteration": iteration,
+                "content": main_generation,
+            })
+            state.save(run_dir)
+
+            main_msgs.extend(main_loop_messages)
+            iterative_msgs.extend(main_loop_messages)
 
         if _stop_requested:
             break
 
-        # --- 3: STRATEGIC POOL AGENT (L306-373) ---
-        print("[3/4] Strategic Pool Agent...", file=sys.stderr)
-        strat_observation = "\n".join([
-            "## Observation: Current Main Generation",
-            main_prompt_text,
-            "",
-            "## Observation: Solution Critique",
-            suggestions_prompt_text,
-            "",
-            "## Deep Analysis Task",
-            "Study the solution and tool executions above carefully:",
-            "- What unexplored strategic territories remain?",
-            "",
-            "## Strategic Pool Evolution Task",
-            f"Based on your deep observation, UPDATE and EVOLVE your strategic pool with {pool_size} strategies:",
-            "- If a strategy was well-explored, replace it with something more orthogonal",
-            "- If a strategy was ignored or poorly attempted, keep it but reframe more compellingly",
-            "- If they're fixated on one approach, propose radical departures",
-            "- Progressively expand into more unexpected domains with each iteration",
-            "- Focus on what they HAVEN'T tried, not what they have",
-            "",
-            f"Generate {pool_size} evolved strategies that push exploration further.",
-        ])
-        strategic_msgs.append(user_message(strat_observation))
+        skip_critique = resume_phase == "Strategic Pool Agent"
 
-        pool_result = call_contextual_agent(
-            "Strategic Pool Agent",
-            strategic_msgs,
-            prompts["strategic_pool"],
-            session_id=session_id_for_agent(run_id, "strategic-pool"),
-            seed_images=seed_images,
-            temperature=temperature,
-            top_p=top_p,
-            max_tokens=max_tokens,
-            env=env,
-        )
+        if resume_phase == "Iterative Agent":
+            critique_result = resume_agent[1]
+            resume_agent = None
+        elif not skip_critique:
+            iterative_msgs.append(user_message(
+                "Please critique the solution and tool executions you just generated above. "
+                "If no tools were used, critique the generation text."
+            ))
+            critique_result = _agent(
+                "Iterative Agent",
+                snap("Iterative Agent", main_prompt_text=main_prompt_text, main_loop_messages=main_loop_messages),
+                "Iterative Agent",
+                iterative_msgs,
+                prompts["iterative_agent"],
+                session_id=session_id_for_agent(run_id, "iterative-agent"),
+                seed_images=seed_images,
+                cursor_tools=cursor_tools,
+                cursor_body=cursor_body,
+                temperature=max(0.2, temperature - 0.3),
+                top_p=top_p,
+                max_tokens=max_tokens,
+                env=env,
+            )
+        if skip_critique and active_ck:
+            suggestions_prompt_text = active_ck.get("suggestions_prompt_text", "")
+            suggestions_loop_messages = active_ck.get("suggestions_loop_messages", [])
+        elif not skip_critique:
+            suggestions = critique_result.text
+            suggestions_prompt_text = _prompt_text(critique_result)
+            suggestions_loop_messages = critique_result.loop_messages or [{"role": "assistant", "content": suggestions}]
+
+            state.current_best_suggestions = suggestions
+            state.all_iterative_suggestions.append(suggestions)
+            state.messages.append({"role": "iterative_agent", "iteration": iteration, "content": suggestions})
+            iterative_msgs.extend(suggestions_loop_messages)
+            state.save(run_dir)
+
+        if _stop_requested:
+            break
+
+        if resume_phase == "Strategic Pool Agent":
+            pool_result = resume_agent[1]
+            resume_agent = None
+        else:
+            print("[3/4] Strategic Pool Agent...", file=sys.stderr)
+            strat_observation = "\n".join([
+                "## Observation: Current Main Generation",
+                main_prompt_text,
+                "",
+                "## Observation: Solution Critique",
+                suggestions_prompt_text,
+                "",
+                "## Deep Analysis Task",
+                "Study the solution and tool executions above carefully:",
+                "- What unexplored strategic territories remain?",
+                "",
+                "## Strategic Pool Evolution Task",
+                f"Based on your deep observation, UPDATE and EVOLVE your strategic pool with {pool_size} strategies:",
+                "- If a strategy was well-explored, replace it with something more orthogonal",
+                "- If a strategy was ignored or poorly attempted, keep it but reframe more compellingly",
+                "- If they're fixated on one approach, propose radical departures",
+                "- Progressively expand into more unexpected domains with each iteration",
+                "- Focus on what they HAVEN'T tried, not what they have",
+                "",
+                f"Generate {pool_size} evolved strategies that push exploration further.",
+            ])
+            strategic_msgs.append(user_message(strat_observation))
+
+            pool_result = _agent(
+                "Strategic Pool Agent",
+                snap(
+                    "Strategic Pool Agent",
+                    main_prompt_text=main_prompt_text,
+                    main_loop_messages=main_loop_messages,
+                    suggestions_prompt_text=suggestions_prompt_text,
+                    suggestions_loop_messages=suggestions_loop_messages,
+                ),
+                "Strategic Pool Agent",
+                strategic_msgs,
+                prompts["strategic_pool"],
+                session_id=session_id_for_agent(run_id, "strategic-pool"),
+                seed_images=seed_images,
+                cursor_tools=cursor_tools,
+                cursor_body=cursor_body,
+                temperature=temperature,
+                top_p=top_p,
+                max_tokens=max_tokens,
+                env=env,
+            )
         strategic_pool = pool_result.text
         strategic_pool_prompt_text = _prompt_text(pool_result)
         strat_loop_messages = pool_result.loop_messages or [{"role": "assistant", "content": strategic_pool}]
@@ -267,12 +451,16 @@ def run_contextual_loop(
                 "what didn't based on these iteration texts."
             )
 
-            mem_result = call_contextual_agent(
+            mem_result = _agent(
+                "Memory Agent",
+                snap("Memory Agent"),
                 "Memory Agent",
                 [user_message("\n".join(memory_parts))],
                 prompts["memory_agent"],
                 session_id=session_id_for_agent(run_id, "memory-agent"),
                 seed_images=[],
+                cursor_tools=cursor_tools,
+                cursor_body=cursor_body,
                 temperature=0.3,
                 top_p=top_p,
                 max_tokens=max_tokens,
@@ -321,12 +509,42 @@ def run_contextual_loop(
             "raised in the critique."
         ))
 
+        active_ck = None
+        resume_agent = None
+
     if _stop_requested and state.status == "running":
         state.status = "stopped"
         state.exit_reason = "user interrupt"
 
     state.save(run_dir)
     return state
+
+
+def resume_contextual_loop(
+    checkpoint: dict,
+    agent_name: str,
+    agent_result: AgentCallResult,
+) -> RefineState:
+    return run_contextual_loop(
+        task=checkpoint["task"],
+        initial_user_content=checkpoint["task"],
+        seed_images=checkpoint["seed_images"],
+        run_id=checkpoint["run_id"],
+        run_dir=Path(checkpoint["run_dir"]),
+        prompts=checkpoint["prompts"],
+        env=checkpoint["env"],
+        max_iterations=checkpoint["max_iterations"],
+        memory_every=checkpoint["memory_every"],
+        pool_size=checkpoint["pool_size"],
+        temperature=checkpoint["temperature"],
+        top_p=checkpoint["top_p"],
+        max_tokens=checkpoint["max_tokens"],
+        seed_messages=checkpoint.get("seed_messages"),
+        cursor_tools=checkpoint.get("cursor_tools"),
+        cursor_body=checkpoint.get("cursor_body"),
+        resume_checkpoint=checkpoint,
+        resume_agent=(agent_name, agent_result),
+    )
 
 
 def main() -> None:
