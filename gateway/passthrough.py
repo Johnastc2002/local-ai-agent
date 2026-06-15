@@ -43,9 +43,9 @@ def _parse_body(body: bytes | None) -> dict:
         return {}
 
 
-async def chat_completion_json(body: dict, request: Request) -> dict:
+async def chat_completion_json(body: dict, request: Request) -> tuple[dict, dict]:
     """Non-streaming completion from vLLM (reliable for localhost upstream)."""
-    from gateway.context_trim import trim_body_for_vllm
+    from gateway.context_trim import ensure_completion_usage, trim_body_for_vllm
 
     payload = trim_body_for_vllm({**body, "stream": False})
     url = f"{vllm_upstream()}/v1/chat/completions"
@@ -63,7 +63,8 @@ async def chat_completion_json(body: dict, request: Request) -> dict:
             )
             print(f"vLLM {resp.status_code}: {detail}", file=sys.stderr)
             raise RuntimeError(detail)
-        return resp.json()
+        completion = ensure_completion_usage(resp.json(), payload)
+        return completion, payload
 
 
 async def forward(
@@ -110,19 +111,33 @@ async def forward_chat_completion(body: dict, request: Request) -> Response:
     Chat completion via vLLM. If client asked for stream, buffer then emit SSE chunks.
     Avoids fragile long-lived passthrough streams (RunPod proxy / client timeouts).
     """
+    from gateway.context_trim import ensure_completion_usage, trim_body_for_vllm, wants_usage_in_stream
     from gateway.router import stream_chunks, stream_text_chunks
-    from gateway.context_trim import trim_body_for_vllm
 
     want_stream = bool(body.get("stream"))
+    include_usage = wants_usage_in_stream(body)
     if want_stream:
-        completion = await chat_completion_json(body, request)
+        completion, payload = await chat_completion_json(body, request)
         msg = completion["choices"][0]["message"]
         if msg.get("tool_calls"):
-            chunks = stream_chunks(completion)
+            chunks = stream_chunks(completion, include_usage=include_usage)
         else:
-            chunks = stream_text_chunks(completion)
+            chunks = stream_text_chunks(completion, include_usage=include_usage)
         return StreamingResponse(iter(chunks), media_type="text/event-stream")
 
-    payload = json.dumps(trim_body_for_vllm({**body, "stream": False})).encode()
-    return await forward("POST", "/v1/chat/completions", request, payload)
+    payload = trim_body_for_vllm({**body, "stream": False})
+    payload_bytes = json.dumps(payload).encode()
+    resp = await forward("POST", "/v1/chat/completions", request, payload_bytes)
+    if resp.status_code == 200:
+        try:
+            completion = json.loads(resp.body)
+            completion = ensure_completion_usage(completion, payload)
+            return Response(
+                content=json.dumps(completion).encode(),
+                status_code=200,
+                media_type="application/json",
+            )
+        except (json.JSONDecodeError, KeyError, TypeError):
+            pass
+    return resp
 

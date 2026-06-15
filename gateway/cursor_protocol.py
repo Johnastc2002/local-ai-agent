@@ -157,10 +157,17 @@ def completion_from_assistant(body: dict, assistant: Message) -> dict:
     import time
     import uuid
 
-    from llm import load_env
+    from gateway.context_trim import estimate_usage
+    from llm import content_to_text, load_env
 
     model = body.get("model") or load_env().get("MODEL_NAME", "Qwen/Qwen3.6-27B")
     finish = "tool_calls" if assistant.get("tool_calls") else "stop"
+    usage = estimate_usage(
+        body.get("messages") or [],
+        tools=body.get("tools"),
+        completion_text=content_to_text(assistant.get("content")),
+        tool_calls=assistant.get("tool_calls"),
+    )
     return {
         "id": f"chatcmpl-icr-{uuid.uuid4().hex[:12]}",
         "object": "chat.completion",
@@ -173,5 +180,5 @@ def completion_from_assistant(body: dict, assistant: Message) -> dict:
                 "finish_reason": finish,
             }
         ],
-        "usage": {"prompt_tokens": 0, "completion_tokens": 0, "total_tokens": 0},
+        "usage": usage,
     }

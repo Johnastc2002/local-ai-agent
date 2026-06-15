@@ -25,6 +25,7 @@ from fastapi.responses import JSONResponse, StreamingResponse
 
 from gateway.audit_log import log_request
 from gateway.config import icr_mode, proxy_port, vllm_upstream
+from llm import load_env
 from gateway.cursor_protocol import is_tool_result_turn, is_user_turn, pending_tool_call_ids
 from gateway.icr_plan import (
     IcrPaused,
@@ -32,10 +33,10 @@ from gateway.icr_plan import (
     finish_icr,
     resume_icr_state,
     run_icr_plan,
-    run_icr_plan_stream,
     run_icr_state,
 )
 from gateway.icr_session import IcrSession
+from gateway.context_trim import wants_usage_in_stream
 from gateway.passthrough import forward, forward_chat_completion
 from gateway.router import find_plan_tool, is_agent_request, stream_chunks, stream_text_chunks
 
@@ -70,24 +71,33 @@ async def _forward_chat(body: dict, request: Request) -> Response:
         return _gateway_error_response(exc)
 
 
+def _stream_completion(body: dict, completion: dict) -> StreamingResponse:
+    include_usage = wants_usage_in_stream(body)
+    msg = completion["choices"][0]["message"]
+    if msg.get("tool_calls"):
+        chunks = stream_chunks(completion, include_usage=include_usage)
+    else:
+        chunks = stream_text_chunks(completion, include_usage=include_usage)
+    return StreamingResponse(iter(chunks), media_type="text/event-stream")
+
+
 def _paused_response(body: dict, completion: dict) -> JSONResponse | StreamingResponse:
     if not body.get("stream"):
         return JSONResponse(completion)
-    msg = completion["choices"][0]["message"]
-    if msg.get("tool_calls"):
-        chunks = stream_chunks(completion)
-    else:
-        chunks = stream_text_chunks(completion)
-    return StreamingResponse(iter(chunks), media_type="text/event-stream")
+    return _stream_completion(body, completion)
 
 
 @app.get("/health")
 async def health():
+    from gateway.context_trim import max_model_len
+
+    env = load_env()
     return {
         "status": "ok",
         "upstream": vllm_upstream(),
         "icr_mode": icr_mode(),
         "cursor_tools": "passthrough",
+        "max_model_len": max_model_len(env),
     }
 
 
@@ -118,7 +128,7 @@ async def chat_completions(request: Request):
                 if plan_tool:
                     completion = finish_icr(body, state, plan_tool)
                     if body.get("stream"):
-                        return StreamingResponse(iter(stream_chunks(completion)), media_type="text/event-stream")
+                        return _stream_completion(body, completion)
                     return JSONResponse(completion)
                 enriched = enrich_body_with_icr(body, state)
                 return await _forward_chat(enriched, request)
@@ -132,8 +142,8 @@ async def chat_completions(request: Request):
     try:
         if plan_tool:
             if body.get("stream"):
-                chunks = await asyncio.to_thread(run_icr_plan_stream, body, plan_tool)
-                return StreamingResponse(iter(chunks), media_type="text/event-stream")
+                completion = await asyncio.to_thread(run_icr_plan, body, plan_tool_name=plan_tool)
+                return _stream_completion(body, completion)
             completion = await asyncio.to_thread(run_icr_plan, body, plan_tool_name=plan_tool)
             return JSONResponse(completion)
 

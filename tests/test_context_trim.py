@@ -5,6 +5,29 @@ from gateway.context_trim import sanitize_tool_chain, trim_body_for_vllm, trim_c
 
 
 class ContextTrimTest(unittest.TestCase):
+    def test_trim_skips_when_under_budget(self):
+        msgs = [
+            {"role": "system", "content": "x" * 5000},
+            {"role": "user", "content": "hello"},
+            {"role": "assistant", "content": "hi there"},
+        ]
+        out = trim_conversation_tail(msgs, budget_tokens=100_000)
+        self.assertEqual(len(out), 3)
+        self.assertEqual(len(out[0]["content"]), 5000)
+
+    def test_stream_includes_usage(self):
+        from gateway.router import stream_text_chunks
+
+        completion = {
+            "id": "x",
+            "model": "test",
+            "created": 1,
+            "choices": [{"message": {"role": "assistant", "content": "ok"}}],
+            "usage": {"prompt_tokens": 100, "completion_tokens": 5, "total_tokens": 105},
+        }
+        chunks = stream_text_chunks(completion, include_usage=True)
+        self.assertTrue(any('"prompt_tokens": 100' in c for c in chunks))
+
     def test_trims_long_user(self):
         msgs = [
             {"role": "system", "content": "rules"},

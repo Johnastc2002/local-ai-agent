@@ -10,6 +10,7 @@ import uuid
 from typing import Any
 
 from llm import content_to_text, load_env
+from gateway.context_trim import estimate_usage
 from gateway.cursor_protocol import find_plan_tool, is_agent_request as _is_agent_request
 
 ICR_CONTEXT_MARKER = "[ICR refined context]"
@@ -114,6 +115,11 @@ def build_plan_arguments(state, run_dir, task: str) -> dict[str, Any]:
 
 def completion_with_content(body: dict, content: str) -> dict:
     model = body.get("model") or load_env().get("MODEL_NAME", "Qwen/Qwen3.6-27B")
+    usage = estimate_usage(
+        body.get("messages") or [],
+        tools=body.get("tools"),
+        completion_text=content,
+    )
     return {
         "id": f"chatcmpl-icr-{uuid.uuid4().hex[:12]}",
         "object": "chat.completion",
@@ -126,13 +132,28 @@ def completion_with_content(body: dict, content: str) -> dict:
                 "finish_reason": "stop",
             }
         ],
-        "usage": {"prompt_tokens": 0, "completion_tokens": 0, "total_tokens": 0},
+        "usage": usage,
     }
 
 
 def completion_with_plan_tool(body: dict, *, plan_tool_name: str, arguments: dict) -> dict:
     tool_call_id = f"call_{uuid.uuid4().hex[:24]}"
     model = body.get("model") or load_env().get("MODEL_NAME", "Qwen/Qwen3.6-27B")
+    tool_calls = [
+        {
+            "id": tool_call_id,
+            "type": "function",
+            "function": {
+                "name": plan_tool_name,
+                "arguments": json.dumps(arguments, ensure_ascii=False),
+            },
+        }
+    ]
+    usage = estimate_usage(
+        body.get("messages") or [],
+        tools=body.get("tools"),
+        tool_calls=tool_calls,
+    )
     return {
         "id": f"chatcmpl-icr-{uuid.uuid4().hex[:12]}",
         "object": "chat.completion",
@@ -144,25 +165,16 @@ def completion_with_plan_tool(body: dict, *, plan_tool_name: str, arguments: dic
                 "message": {
                     "role": "assistant",
                     "content": None,
-                    "tool_calls": [
-                        {
-                            "id": tool_call_id,
-                            "type": "function",
-                            "function": {
-                                "name": plan_tool_name,
-                                "arguments": json.dumps(arguments, ensure_ascii=False),
-                            },
-                        }
-                    ],
+                    "tool_calls": tool_calls,
                 },
                 "finish_reason": "tool_calls",
             }
         ],
-        "usage": {"prompt_tokens": 0, "completion_tokens": 0, "total_tokens": 0},
+        "usage": usage,
     }
 
 
-def stream_chunks(completion: dict) -> list[str]:
+def stream_chunks(completion: dict, *, include_usage: bool = False) -> list[str]:
     cid = completion["id"]
     model = completion["model"]
     created = completion["created"]
@@ -221,20 +233,21 @@ def stream_chunks(completion: dict) -> list[str]:
             ],
         }
     )
-    emit(
-        {
-            "id": cid,
-            "object": "chat.completion.chunk",
-            "created": created,
-            "model": model,
-            "choices": [{"index": 0, "delta": {}, "finish_reason": "tool_calls"}],
-        }
-    )
+    final: dict[str, Any] = {
+        "id": cid,
+        "object": "chat.completion.chunk",
+        "created": created,
+        "model": model,
+        "choices": [{"index": 0, "delta": {}, "finish_reason": "tool_calls"}],
+    }
+    if include_usage and completion.get("usage"):
+        final["usage"] = completion["usage"]
+    emit(final)
     chunks.append("data: [DONE]\n\n")
     return chunks
 
 
-def stream_text_chunks(completion: dict) -> list[str]:
+def stream_text_chunks(completion: dict, *, include_usage: bool = False) -> list[str]:
     cid = completion["id"]
     model = completion["model"]
     created = completion["created"]
@@ -270,14 +283,15 @@ def stream_text_chunks(completion: dict) -> list[str]:
                 ],
             }
         )
-    emit(
-        {
-            "id": cid,
-            "object": "chat.completion.chunk",
-            "created": created,
-            "model": model,
-            "choices": [{"index": 0, "delta": {}, "finish_reason": "stop"}],
-        }
-    )
+    final: dict[str, Any] = {
+        "id": cid,
+        "object": "chat.completion.chunk",
+        "created": created,
+        "model": model,
+        "choices": [{"index": 0, "delta": {}, "finish_reason": "stop"}],
+    }
+    if include_usage and completion.get("usage"):
+        final["usage"] = completion["usage"]
+    emit(final)
     chunks.append("data: [DONE]\n\n")
     return chunks

@@ -42,8 +42,60 @@ def context_input_budget(env: dict | None = None, *, max_output: int | None = No
     env = env or load_env()
     max_len = max_model_len(env)
     max_out = max_output if max_output is not None else int(env.get("REFINE_MAX_TOKENS", "2048"))
-    reserve = max(512, max_out) + 2048  # tools schema + headroom
-    return max(4096, max_len - reserve)
+    reserve = max(512, max_out) + 1024  # tools schema + small headroom
+    return max(8192, max_len - reserve)
+
+
+def conversation_token_count(messages: list[Message], tools: list | None = None) -> int:
+    import json
+
+    total = sum(message_tokens(m) for m in messages)
+    if tools:
+        total += estimate_tokens(json.dumps(tools))
+    return total
+
+
+def estimate_usage(
+    messages: list[Message],
+    *,
+    tools: list | None = None,
+    completion_text: str = "",
+    tool_calls: list | None = None,
+) -> dict[str, int]:
+    import json
+
+    prompt = conversation_token_count(messages, tools)
+    if tool_calls:
+        comp = estimate_tokens(json.dumps(tool_calls))
+    else:
+        comp = estimate_tokens(completion_text)
+    return {
+        "prompt_tokens": prompt,
+        "completion_tokens": comp,
+        "total_tokens": prompt + comp,
+    }
+
+
+def ensure_completion_usage(completion: dict, payload: dict) -> dict:
+    """Cursor context indicator needs non-zero usage; vLLM sometimes omits it."""
+    usage = completion.get("usage") or {}
+    if usage.get("prompt_tokens", 0) > 0:
+        return completion
+    msg = completion["choices"][0]["message"]
+    usage = estimate_usage(
+        payload.get("messages") or [],
+        tools=payload.get("tools"),
+        completion_text=content_to_text(msg.get("content")),
+        tool_calls=msg.get("tool_calls"),
+    )
+    out = dict(completion)
+    out["usage"] = usage
+    return out
+
+
+def wants_usage_in_stream(body: dict) -> bool:
+    opts = body.get("stream_options") or {}
+    return bool(opts.get("include_usage"))
 
 
 def _trim_content(msg: Message, char_budget: int) -> Message:
@@ -68,15 +120,20 @@ def trim_conversation_tail(
     if not messages or budget_tokens <= 0:
         return list(messages)
 
+    copied = [dict(m) for m in messages]
+    if conversation_token_count(copied) <= budget_tokens:
+        return copied
+
     prefix: list[Message] = []
     rest: list[Message] = []
-    for msg in messages:
+    for msg in copied:
         if msg.get("role") in ("system", "developer") and not rest:
             prefix.append(dict(msg))
         else:
             rest.append(dict(msg))
 
-    prefix_budget = min(budget_tokens // 4, 4096)
+    prefix_cap = int(env.get("SYSTEM_PREFIX_MAX_TOKENS", "8192"))
+    prefix_budget = min(budget_tokens // 3, prefix_cap)
     trimmed_prefix: list[Message] = []
     used = 0
     for msg in prefix:
