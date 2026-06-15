@@ -1,0 +1,32 @@
+{
+  "captured_at": "EXAMPLE — replace by running make logger",
+  "kind": "plan",
+  "tool_names": ["CreatePlan"],
+  "stream": true,
+  "model": "Qwen/Qwen3.6-27B",
+  "body": {
+    "model": "Qwen/Qwen3.6-27B",
+    "stream": true,
+    "messages": [
+      {"role": "user", "content": "Refactor voice chat state machine in BotConfig.kt"}
+    ],
+    "tools": [
+      {
+        "type": "function",
+        "function": {
+          "name": "CreatePlan",
+          "parameters": {
+            "type": "object",
+            "properties": {
+              "name": {"type": "string"},
+              "overview": {"type": "string"},
+              "plan": {"type": "string"},
+              "todos": {"type": "array"},
+              "isProject": {"type": "boolean"}
+            }
+          }
+        }
+      }
+    ]
+  }
+}

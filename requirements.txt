@@ -1,0 +1,4 @@
+# OpenAI-compatible ICR gateway (Cursor BYOK)
+httpx>=0.27
+uvicorn>=0.30
+fastapi>=0.115

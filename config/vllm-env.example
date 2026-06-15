@@ -1,0 +1,22 @@
+# Paste these into your RunPod dedicated pod → Edit → Environment Variables
+# Template: vLLM worker or custom Docker with vLLM 0.20+
+
+MODEL_NAME=Qwen/Qwen3.6-27B
+MAX_MODEL_LEN=65536
+GPU_MEMORY_UTILIZATION=0.90
+
+# Required for Cursor Agent mode (tool calling)
+ENABLE_AUTO_TOOL_CHOICE=true
+TOOL_CALL_PARSER=qwen3_xml
+
+# Qwen3.6 is multimodal — enable if attaching images via refine.py --attach
+# LIMIT_MM_PER_PROMPT=image=5
+
+# Optional: Qwen3 thinking/reasoning extraction
+REASONING_PARSER=qwen3
+
+# If model is gated on HuggingFace, set in RunPod env (not in git):
+# HF_TOKEN=hf_...
+
+# Expose port 8000 as HTTP in RunPod pod settings:
+#   ports: ["8000/http"]

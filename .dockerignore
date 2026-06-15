@@ -1,0 +1,10 @@
+.venv/
+__pycache__/
+*.pyc
+.env
+runs/
+captures/*
+!captures/example_plan.json
+.git/
+*.md
+!prompts/

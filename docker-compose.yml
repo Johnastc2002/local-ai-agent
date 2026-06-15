@@ -1,0 +1,80 @@
+# Build/run on RunPod pod only (needs NVIDIA GPU for vllm service).
+#
+# Mac: make pod-up   (prints one-liner for pod terminal)
+# Pod: bash scripts/install-on-pod.sh
+
+services:
+  vllm:
+    image: vllm/vllm-openai:latest
+    ipc: host
+    restart: unless-stopped
+    ports:
+      - "${RUNPOD_PORT:-8000}:8000"
+    environment:
+      HF_TOKEN: ${HF_TOKEN:-}
+      HUGGING_FACE_HUB_TOKEN: ${HF_TOKEN:-}
+    volumes:
+      - huggingface-cache:/root/.cache/huggingface
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: 1
+              capabilities: [gpu]
+    command:
+      - --model
+      - ${MODEL_NAME}
+      - --max-model-len
+      - ${MAX_MODEL_LEN:-8192}
+      - --gpu-memory-utilization
+      - ${GPU_MEMORY_UTILIZATION:-0.90}
+      - --enable-auto-tool-choice
+      - --tool-call-parser
+      - ${TOOL_CALL_PARSER:-hermes}
+      - --host
+      - "0.0.0.0"
+      - --port
+      - "8000"
+    healthcheck:
+      test: ["CMD", "curl", "-fsS", "http://localhost:8000/v1/models"]
+      interval: 30s
+      timeout: 10s
+      retries: 30
+      start_period: 300s
+
+  gateway:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    restart: unless-stopped
+    ports:
+      - "${GATEWAY_PORT:-8787}:8787"
+    environment:
+      GATEWAY_ON_POD: "1"
+      VLLM_UPSTREAM: http://vllm:8000
+      PROXY_PORT: "8787"
+      ICR_REPO: /icr
+      ICR_MODE: ${ICR_MODE:-auto}
+      ICR_REPO_PATH: /icr
+      CURSOR_PLAN_MAX_ITERATIONS: ${CURSOR_PLAN_MAX_ITERATIONS:-2}
+      REFINE_MEMORY_EVERY: ${REFINE_MEMORY_EVERY:-10}
+      REFINE_POOL_SIZE: ${REFINE_POOL_SIZE:-12}
+      REFINE_MAX_TOKENS: ${REFINE_MAX_TOKENS:-2048}
+      REFINE_PYTHON_TOOLS: ${REFINE_PYTHON_TOOLS:-true}
+      MODEL_NAME: ${MODEL_NAME}
+      RUNPOD_API_KEY: ${RUNPOD_API_KEY:-local}
+    volumes:
+      - ${ICR_REPO_HOST:-./icr}:/icr:ro
+    depends_on:
+      vllm:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "curl", "-fsS", "http://localhost:8787/health"]
+      interval: 15s
+      timeout: 5s
+      retries: 10
+      start_period: 20s
+
+volumes:
+  huggingface-cache:
