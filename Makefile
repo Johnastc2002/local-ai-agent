@@ -1,15 +1,18 @@
-.PHONY: help ready test test-gateway test-pipeline cursor-config \
+.PHONY: help ready verify test test-gateway test-pipeline cursor-config logger \
        start stop wait wait-all status list url gateway-url \
-       pod-up pod-up-prod refine
+       pod-up pod-up-prod refine test-tools
 
 help:
 	@echo "ICR gateway on RunPod — you edit .env once, then:"
 	@echo ""
+	@echo "  make verify        Local checks before deploy (run this first)"
 	@echo "  make pod-up        Print pod install command (run in RunPod terminal)"
 	@echo "  make ready         Mac: start pod + wait + test gateway + print Cursor settings"
 	@echo "  make test          Test vLLM (:8000)"
 	@echo "  make test-gateway  Test gateway passthrough (:8787)"
 	@echo "  make test-pipeline Test ICR Plan route (slow, uses MODEL_PROFILE)"
+	@echo "  make test-tools     Unit test Cursor tool parsing"
+	@echo "  make logger         Mac: capture Cursor requests to captures/"
 	@echo "  make cursor-config Print Cursor BYOK settings"
 	@echo ""
 	@echo "  make start | stop | status | wait | wait-all"
@@ -18,6 +21,9 @@ help:
 
 # --- Mac workflow ---
 
+verify:
+	bash scripts/verify-ready.sh
+
 ready: start wait-all test-gateway cursor-config
 
 test:
@@ -25,6 +31,12 @@ test:
 
 test-gateway:
 	python3 smoke_test.py --gateway
+
+test-tools:
+	python3 -m unittest tests.test_cursor_tools -v
+
+logger:
+	python3 tools/request_logger.py
 
 test-pipeline:
 	python3 smoke_test.py --gateway --plan-smoke

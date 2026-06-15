@@ -10,23 +10,11 @@ import uuid
 from typing import Any
 
 from llm import content_to_text, load_env
+from gateway.cursor_protocol import find_plan_tool, is_agent_request as _is_agent_request
 
 ICR_CONTEXT_MARKER = "[ICR refined context]"
 
 Message = dict[str, Any]
-
-PLAN_TOOL_HINTS = ("createplan", "create_plan", "updateplan", "update_plan")
-
-
-def find_plan_tool(tools: list[dict] | None) -> str | None:
-    if not tools:
-        return None
-    for tool in tools:
-        fn = tool.get("function") or {}
-        name = fn.get("name") or ""
-        if any(h in name.lower() for h in PLAN_TOOL_HINTS):
-            return name
-    return None
 
 
 def is_user_turn(body: dict) -> bool:
@@ -36,8 +24,7 @@ def is_user_turn(body: dict) -> bool:
 
 def is_agent_request(body: dict) -> bool:
     """Agent with Cursor tools, but not Plan (CreatePlan)."""
-    tools = body.get("tools") or []
-    return bool(tools) and find_plan_tool(tools) is None
+    return _is_agent_request(body)
 
 
 def inject_icr_context(messages: list[Message], icr_text: str) -> list[Message]:

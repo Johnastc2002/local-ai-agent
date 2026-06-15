@@ -19,6 +19,7 @@ from gateway.cursor_protocol import (
     conversation_key,
     cursor_tools,
     extract_task,
+    icr_request_options,
     is_agent_request,
     pending_tool_call_ids,
     seed_messages_from_cursor,
@@ -76,6 +77,7 @@ def _pending_to_call(p: PendingAgent, body: dict, env: dict) -> PendingAgentCall
         seed_images=p.seed_images,
         cursor_tools=cursor_tools(body),
         body=body,
+        request_options=icr_request_options(body),
     )
 
 

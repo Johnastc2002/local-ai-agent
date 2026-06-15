@@ -20,6 +20,7 @@ import uvicorn
 from fastapi import FastAPI, Request
 from fastapi.responses import JSONResponse, StreamingResponse
 
+from gateway.audit_log import log_request
 from gateway.config import icr_mode, proxy_port, vllm_upstream
 from gateway.cursor_protocol import is_tool_result_turn, is_user_turn, pending_tool_call_ids
 from gateway.icr_plan import (
@@ -38,6 +39,17 @@ from gateway.passthrough import forward
 from gateway.router import find_plan_tool, is_agent_request, stream_chunks, stream_text_chunks
 
 app = FastAPI(title="ICR Gateway", version="1.0")
+
+
+def _paused_response(body: dict, completion: dict) -> JSONResponse | StreamingResponse:
+    if not body.get("stream"):
+        return JSONResponse(completion)
+    msg = completion["choices"][0]["message"]
+    if msg.get("tool_calls"):
+        chunks = stream_chunks(completion)
+    else:
+        chunks = stream_text_chunks(completion)
+    return StreamingResponse(iter(chunks), media_type="text/event-stream")
 
 
 @app.get("/health")
@@ -66,6 +78,7 @@ async def chat_completions(request: Request):
     if icr_mode() == "off":
         return await forward("POST", "/v1/chat/completions", request, raw)
 
+    log_request(body)
     plan_tool = find_plan_tool(body.get("tools"))
 
     if is_tool_result_turn(body):
@@ -86,7 +99,7 @@ async def chat_completions(request: Request):
                     return StreamingResponse(iter(stream_text_chunks(completion)), media_type="text/event-stream")
                 return JSONResponse(completion)
             except IcrPaused as paused:
-                return JSONResponse(paused.completion)
+                return _paused_response(body, paused.completion)
         return await forward("POST", "/v1/chat/completions", request, raw)
 
     if not is_user_turn(body):
@@ -109,7 +122,7 @@ async def chat_completions(request: Request):
             return StreamingResponse(iter(chunks), media_type="text/event-stream")
         return JSONResponse(run_icr_answer(body))
     except IcrPaused as paused:
-        return JSONResponse(paused.completion)
+        return _paused_response(body, paused.completion)
     except Exception as exc:
         return JSONResponse(
             {"error": {"message": f"ICR pipeline failed: {exc}", "type": "icr_error"}},

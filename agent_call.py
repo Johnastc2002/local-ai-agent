@@ -15,7 +15,9 @@ from typing import Any
 
 from gateway.cursor_protocol import (
     PYTHON_TOOL_NAME,
+    icr_request_options,
     is_cursor_managed_tool,
+    tool_name,
 )
 from llm import (
     Message,
@@ -57,6 +59,7 @@ class PendingAgentCall:
     seed_images: list[dict]
     cursor_tools: list[dict]
     body: dict
+    request_options: dict[str, Any]
 
 
 class CursorToolPause(Exception):
@@ -69,7 +72,7 @@ class CursorToolPause(Exception):
 
 
 def _python_tools_enabled(env: dict[str, str]) -> bool:
-    val = env.get("REFINE_PYTHON_TOOLS", os.environ.get("REFINE_PYTHON_TOOLS", "true"))
+    val = env.get("REFINE_PYTHON_TOOLS", os.environ.get("REFINE_PYTHON_TOOLS", "false"))
     return val.lower() in ("1", "true", "yes", "on")
 
 
@@ -87,7 +90,7 @@ def _parse_tool_args(raw: Any) -> dict:
 def _tools_for_call(cursor_tools: list[dict], env: dict[str, str]) -> list[dict]:
     tools = list(cursor_tools)
     if _python_tools_enabled(env):
-        names = {t.get("function", {}).get("name") for t in tools}
+        names = {tool_name(t) for t in tools}
         if PYTHON_TOOL_NAME not in names:
             tools.append(PYTHON_TOOL_DEF)
     return tools
@@ -116,7 +119,8 @@ def _run_tool_loop(
             top_p=pending.top_p,
             max_tokens=pending.max_tokens,
             tools=tools or None,
-            tool_choice="auto" if tools else None,
+            tool_choice=pending.request_options.get("tool_choice", "auto" if tools else None),
+            parallel_tool_calls=pending.request_options.get("parallel_tool_calls"),
             env=env,
         )
         response = parse_assistant_message(body)
@@ -191,6 +195,7 @@ def _run_tool_loop(
                     seed_images=pending.seed_images,
                     cursor_tools=pending.cursor_tools,
                     body=pending.body,
+                    request_options=pending.request_options,
                 ),
             )
 
@@ -228,6 +233,7 @@ def call_contextual_agent(
     env = env or load_env()
     body = cursor_body or {"tools": cursor_tools or []}
     tools = _tools_for_call(cursor_tools or [], env)
+    req_opts = icr_request_options(body)
 
     if not tools:
         text = chat(
@@ -255,6 +261,7 @@ def call_contextual_agent(
         seed_images=seed_images,
         cursor_tools=cursor_tools or [],
         body=body,
+        request_options=req_opts,
     )
     return _run_tool_loop(pending, env=env, model=model)
 

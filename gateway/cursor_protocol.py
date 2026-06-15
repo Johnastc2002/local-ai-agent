@@ -14,8 +14,27 @@ PYTHON_TOOL_NAME = "python_virtual_filesystem"
 
 
 def tool_name(tool: dict) -> str:
-    fn = tool.get("function") or {}
-    return str(fn.get("name") or "")
+    """Extract tool name from OpenAI function or Cursor custom tool defs."""
+    if tool.get("type") == "function":
+        fn = tool.get("function") or {}
+        return str(fn.get("name") or "")
+    if custom := tool.get("custom"):
+        if isinstance(custom, dict):
+            return str(custom.get("name") or custom.get("type") or custom.get("id") or "")
+        return str(custom)
+    return str(tool.get("name") or "")
+
+
+def tool_names_from_body(body: dict, *, include_plan: bool = True) -> list[str]:
+    names: list[str] = []
+    for tool in body.get("tools") or []:
+        name = tool_name(tool)
+        if not name:
+            continue
+        if not include_plan and is_plan_tool_name(name):
+            continue
+        names.append(name)
+    return names
 
 
 def is_plan_tool_name(name: str) -> bool:
@@ -24,16 +43,14 @@ def is_plan_tool_name(name: str) -> bool:
 
 
 def cursor_tools(body: dict, *, for_icr: bool = True) -> list[dict]:
-    """Tools Cursor sent — Cursor executes these on the Mac when model calls them."""
-    tools = list(body.get("tools") or [])
+    """
+    Tools to attach to inner ICR vLLM calls.
+    Copies Cursor's tool defs verbatim; only strips CreatePlan during ICR phases.
+    """
+    tools = [dict(t) for t in body.get("tools") or []]
     if not for_icr:
         return tools
-    # During ICR phases, don't let inner agents call CreatePlan early.
     return [t for t in tools if not is_plan_tool_name(tool_name(t))]
-
-
-def cursor_tool_names(body: dict, *, for_icr: bool = True) -> set[str]:
-    return {tool_name(t) for t in cursor_tools(body, for_icr=for_icr) if tool_name(t)}
 
 
 def find_plan_tool(tools: list[dict] | None) -> str | None:
@@ -52,25 +69,34 @@ def is_agent_request(body: dict) -> bool:
 
 
 def is_cursor_managed_tool(name: str, body: dict) -> bool:
-    """Tool Cursor runs locally (read_file, grep, MCP, etc.)."""
-    if name == PYTHON_TOOL_NAME:
+    """
+    True if Cursor sent this tool and should execute it on the Mac.
+    Excludes our internal python sandbox and plan tools (gateway handles plan).
+    """
+    if not name or name == PYTHON_TOOL_NAME or is_plan_tool_name(name):
         return False
-    return name in cursor_tool_names(body, for_icr=True)
+    return name in tool_names_from_body(body, include_plan=False)
+
+
+def icr_request_options(body: dict) -> dict[str, Any]:
+    """Forward tool-related fields Cursor sent (parity with passthrough)."""
+    opts: dict[str, Any] = {}
+    if "tool_choice" in body:
+        opts["tool_choice"] = body["tool_choice"]
+    if "parallel_tool_calls" in body:
+        opts["parallel_tool_calls"] = body["parallel_tool_calls"]
+    return opts
 
 
 def seed_messages_from_cursor(body: dict) -> list[Message]:
     """
     Keep Cursor's context: system rules, @files, codebase snippets, user prompt.
-    Drops prior assistant/tool turns from earlier ICR pauses — those are in session.
+    ICR session stores assistant/tool turns from pause/resume separately.
     """
     out: list[Message] = []
     for msg in body.get("messages") or []:
         role = msg.get("role")
-        if role == "system":
-            out.append(dict(msg))
-        elif role == "user":
-            out.append(dict(msg))
-        elif role == "developer":
+        if role in ("system", "user", "developer"):
             out.append(dict(msg))
     if not any(m.get("role") == "user" for m in out):
         for msg in reversed(body.get("messages") or []):
@@ -101,14 +127,12 @@ def is_tool_result_turn(body: dict) -> bool:
 
 
 def conversation_key(body: dict) -> str:
-    """Stable id for ICR session across tool round-trips."""
     seed_msgs = seed_messages_from_cursor(body)
     payload = json.dumps(seed_msgs, sort_keys=True, ensure_ascii=False)
     return hashlib.sha256(payload.encode()).hexdigest()[:24]
 
 
 def pending_tool_call_ids(messages: list[Message]) -> list[str]:
-    """Tool call ids from the last assistant message before trailing tool messages."""
     if not messages or messages[-1].get("role") != "tool":
         return []
     idx = len(messages) - 1
@@ -117,15 +141,7 @@ def pending_tool_call_ids(messages: list[Message]) -> list[str]:
     if idx < 0 or messages[idx].get("role") != "assistant":
         return []
     assistant = messages[idx]
-    ids: list[str] = []
-    for tc in assistant.get("tool_calls") or []:
-        if tc_id := tc.get("id"):
-            ids.append(tc_id)
-    return ids
-
-
-def tool_results_since(messages: list[Message], after_index: int) -> list[Message]:
-    return [dict(m) for m in messages[after_index + 1 :] if m.get("role") == "tool"]
+    return [tc.get("id") for tc in assistant.get("tool_calls") or [] if tc.get("id")]
 
 
 def completion_from_assistant(body: dict, assistant: Message) -> dict:

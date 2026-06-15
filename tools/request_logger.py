@@ -46,23 +46,16 @@ def _redact(obj: object) -> object:
     return obj
 
 
-def _tool_names(body: dict) -> list[str]:
-    names: list[str] = []
-    for tool in body.get("tools") or []:
-        fn = tool.get("function") or {}
-        if name := fn.get("name"):
-            names.append(name)
-    return names
+from gateway.tool_audit import classify_request, tool_names
 
 
 def _save_capture(kind: str, body: dict) -> Path:
-    CAPTURES.mkdir(parents=True, exist_ok=True)
     ts = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%S")
     path = CAPTURES / f"{ts}_{kind}.json"
     record = {
         "captured_at": datetime.now(timezone.utc).isoformat(),
         "kind": kind,
-        "tool_names": _tool_names(body),
+        "tool_names": tool_names(body),
         "stream": body.get("stream"),
         "model": body.get("model"),
         "body": _redact(body),
@@ -72,12 +65,7 @@ def _save_capture(kind: str, body: dict) -> Path:
 
 
 def _classify(body: dict) -> str:
-    names = [n.lower() for n in _tool_names(body)]
-    if any("plan" in n for n in names):
-        return "plan"
-    if any(n in ("write", "strreplace", "applypatch", "delete", "shell") for n in names):
-        return "agent"
-    return "ask"
+    return classify_request(body)
 
 
 @app.get("/health")

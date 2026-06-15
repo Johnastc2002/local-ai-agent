@@ -117,6 +117,7 @@ def chat_completions(
     max_tokens: int = 8192,
     tools: list[dict] | None = None,
     tool_choice: str | dict | None = None,
+    parallel_tool_calls: bool | None = None,
     env: dict[str, str] | None = None,
 ) -> dict:
     env = env or load_env()
@@ -141,6 +142,8 @@ def chat_completions(
         payload["tools"] = tools
     if tool_choice is not None:
         payload["tool_choice"] = tool_choice
+    if parallel_tool_calls is not None:
+        payload["parallel_tool_calls"] = parallel_tool_calls
 
     req = urllib.request.Request(
         url,

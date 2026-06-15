@@ -87,6 +87,22 @@ Enable MCP in Cursor if you use it (`.cursor/mcp.json`). Plan mode includes MCP 
 
 Optional fallback only: set `CODEBASE_ROOT` + `REFINE_CODEBASE_TOOLS=auto` to read a git clone on the pod — **not the normal path**.
 
+### 3c. Tool parity vs built-in Opus (honest)
+
+The gateway does **not** invent Cursor tools. It forwards whatever Cursor puts in `tools[]` on each HTTP request, executes them via Cursor on your Mac when the model calls them, and returns results back into ICR.
+
+| What | Same as Opus BYOK? | Notes |
+|------|-------------------|--------|
+| Agent edit phase (after ICR) | **Yes** | Full request body forwarded to vLLM — same `tools[]`, `tool_choice`, messages |
+| Agent/Ask ICR inner loop | **Mostly** | Same Cursor `tools[]` verbatim (CreatePlan stripped during ICR only). Extra **`python_virtual_filesystem`** if `REFINE_PYTHON_TOOLS=true` (default) — set `REFINE_PYTHON_TOOLS=false` on pod for exact match |
+| Plan ICR inner loop | **Often no** | Cursor Plan requests frequently send **only `CreatePlan`** — no `read_file`/`grep` in `tools[]`. ICR cannot call tools Cursor did not send. Built-in Opus may use internal index/search not exposed to BYOK |
+| MCP tools | **Yes, if Cursor sends them** | Gateway supports `function` and `custom` tool shapes |
+| Unknown tool names | **Yes** | Any tool in Cursor's `tools[]` is treated as Cursor-managed (no hardcoded allowlist) |
+| ICR pause mid-tool (`stream: true`) | **Partial** | Pause responses are JSON completions, not SSE chunks |
+| First-turn message history | **Partial** | ICR seeds from system/user/dev messages only; assistant/tool history from prior turns is not re-injected into ICR agents (Cursor still sends full history on Agent passthrough) |
+
+**Verify your Cursor version:** run Phase 0 capture on Mac (`python tools/request_logger.py`, point BYOK at `http://127.0.0.1:8787/v1`) and inspect `captures/*_agent.json` / `*_plan.json` tool lists.
+
 **First boot:** model download takes **5–15 minutes**. Watch:
 
 ```bash
