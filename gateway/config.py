@@ -27,6 +27,16 @@ def icr_mode() -> str:
     return os.environ.get("ICR_MODE", "auto").lower()
 
 
+def icr_ask_mode() -> str:
+    """Ask mode: icr (slow, refined) or passthrough (fast, direct vLLM)."""
+    return os.environ.get("ICR_ASK", "passthrough").lower()
+
+
+def icr_agent_mode() -> str:
+    """Agent first user turn: icr or passthrough before edit loop."""
+    return os.environ.get("ICR_AGENT", "icr").lower()
+
+
 def plan_max_iterations() -> int:
     env = load_env()
     return int(env.get("CURSOR_PLAN_MAX_ITERATIONS", "8"))

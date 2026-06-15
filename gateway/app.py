@@ -22,7 +22,7 @@ from fastapi import FastAPI, Request
 from fastapi.responses import JSONResponse, StreamingResponse
 
 from gateway.audit_log import log_request
-from gateway.config import icr_mode, proxy_port, vllm_upstream
+from gateway.config import icr_agent_mode, icr_ask_mode, icr_mode, proxy_port, vllm_upstream
 from gateway.cursor_protocol import is_tool_result_turn, is_user_turn, pending_tool_call_ids
 from gateway.icr_plan import (
     IcrPaused,
@@ -115,9 +115,15 @@ async def chat_completions(request: Request):
             return JSONResponse(completion)
 
         if is_agent_request(body):
+            if icr_agent_mode() in ("off", "passthrough", "false", "0"):
+                return await forward("POST", "/v1/chat/completions", request, raw)
             state = await asyncio.to_thread(run_icr_state, body)
             enriched_raw = json.dumps(enrich_body_with_icr(body, state)).encode()
             return await forward("POST", "/v1/chat/completions", request, enriched_raw)
+
+        # Ask (no plan tools, no agent tools)
+        if icr_ask_mode() in ("off", "passthrough", "false", "0"):
+            return await forward("POST", "/v1/chat/completions", request, raw)
 
         if body.get("stream"):
             chunks = await asyncio.to_thread(run_icr_answer_stream, body)
