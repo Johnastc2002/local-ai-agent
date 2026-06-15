@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Run ICR pipeline for Cursor Plan-mode requests."""
+"""Run ICR pipeline for all Cursor modes."""
 
 from __future__ import annotations
 
@@ -9,20 +9,23 @@ from pathlib import Path
 from attachments import build_initial_user_content, load_seed_images
 from gateway.router import (
     build_plan_arguments,
+    completion_with_content,
     completion_with_plan_tool,
     extract_attach_paths,
     extract_task,
+    inject_icr_context,
     stream_chunks,
+    stream_text_chunks,
 )
 from icr_prompts import load_icr_prompts
 from llm import load_env
-from refine import run_contextual_loop
+from refine import RefineState, run_contextual_loop
 
 ROOT = Path(__file__).resolve().parent.parent
 RUNS = ROOT / "runs"
 
 
-def run_icr_plan(body: dict, *, plan_tool_name: str) -> dict:
+def run_icr_state(body: dict) -> RefineState:
     task = extract_task(body.get("messages") or [])
     if not task:
         raise ValueError("No user message in request")
@@ -43,7 +46,7 @@ def run_icr_plan(body: dict, *, plan_tool_name: str) -> dict:
     seed_images = load_seed_images(attach_paths)
     prompts = load_icr_prompts()
 
-    state = run_contextual_loop(
+    return run_contextual_loop(
         task,
         initial_content,
         seed_images,
@@ -59,6 +62,17 @@ def run_icr_plan(body: dict, *, plan_tool_name: str) -> dict:
         max_tokens=max_tokens,
     )
 
+
+def enrich_body_with_icr(body: dict, state: RefineState) -> dict:
+    icr_text = state.current_best_generation or "(empty)"
+    messages = inject_icr_context(body.get("messages") or [], icr_text)
+    return {**body, "messages": messages}
+
+
+def run_icr_plan(body: dict, *, plan_tool_name: str) -> dict:
+    state = run_icr_state(body)
+    task = extract_task(body.get("messages") or [])
+    run_dir = RUNS / datetime.now().strftime("%Y%m%d-%H%M%S")
     args = build_plan_arguments(state, run_dir, task)
     return completion_with_plan_tool(body, plan_tool_name=plan_tool_name, arguments=args)
 
@@ -66,3 +80,14 @@ def run_icr_plan(body: dict, *, plan_tool_name: str) -> dict:
 def run_icr_plan_stream(body: dict, *, plan_tool_name: str) -> list[str]:
     completion = run_icr_plan(body, plan_tool_name=plan_tool_name)
     return stream_chunks(completion)
+
+
+def run_icr_answer(body: dict) -> dict:
+    state = run_icr_state(body)
+    text = state.current_best_generation or "(empty)"
+    return completion_with_content(body, text)
+
+
+def run_icr_answer_stream(body: dict) -> list[str]:
+    completion = run_icr_answer(body)
+    return stream_text_chunks(completion)

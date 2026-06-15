@@ -10,14 +10,18 @@
 
 ```
 Cursor (Mac) ──BYOK :8787──► RunPod pod
-                               gateway ──► vLLM :8000
+                               gateway
                                  │
-                                 └─ Plan mode → ICR pipeline (not plain chat)
+                                 └─ every user turn → ICR pipeline first
+                                      ├─ Plan  → CreatePlan tool_calls
+                                      ├─ Agent → ICR + vLLM tools
+                                      └─ Ask   → ICR answer text
 ```
 
 - **Mac:** Cursor + `make` commands only. No local LLM.
 - **Pod:** vLLM + gateway. No Docker required (RunPod PyTorch pods don't have it).
 - **Cursor:** Standard Plan / Agent / Ask. No hooks, rules, or MCP.
+- **ICR runs on every new user message** (Plan, Agent, Ask). Agent tool-result turns skip ICR and continue normally.
 
 ---
 
@@ -154,9 +158,18 @@ Optional: add that line to your pod **Start Command** in RunPod template.
 
 **Manual (Cursor):**
 
-1. **Ask** — simple question → normal answer
-2. **Agent** — small edit → file changes
-3. **Plan** — real task → slow (ICR), then **Build** in Agent
+1. **Ask** — simple question → ICR-refined answer (slow first time)
+2. **Agent** — small edit → ICR first, then tools/edits (slow per user message)
+3. **Plan** — real task → ICR → plan UI, then **Build** in Agent
+
+| Mode | ICR? |
+|------|------|
+| Plan | Yes → CreatePlan |
+| Agent (new user message) | Yes → then vLLM |
+| Agent (tool results) | No — continues chain |
+| Ask | Yes → answer text |
+
+Debug passthrough only: set `ICR_MODE=off` in pod `.env` and restart gateway.
 
 ---
 
@@ -193,7 +206,8 @@ Optional: add that line to your pod **Start Command** in RunPod template.
 | `make ready` hangs | Pod stopped or vLLM still loading. `make start`, wait 10+ min, `bash scripts/pod-logs.sh` on pod |
 | Cursor can't connect | Wrong URL — use `:8787` not `:8000`. Run `make gateway-url` |
 | Wrong model errors | Custom model in Cursor must match `MODEL_NAME` in active profile |
-| Plan feels like plain chat | Use **Plan mode** (Shift+Tab), not Agent with "make a plan" |
+| Plan feels like plain chat | Wrong mode, or `ICR_MODE=off` — check `curl localhost:8787/health` |
+| Agent very slow | Expected — ICR runs before every new user message |
 | OOM on pod | Stay on `MODEL_PROFILE=test` or use bigger GPU |
 | vLLM install fails | Paste last 30 lines of `runs/vllm.log` |
 
@@ -204,7 +218,7 @@ Optional: add that line to your pod **Start Command** in RunPod template.
 | Path | Role |
 |------|------|
 | `scripts/install-on-pod.sh` | Pod bootstrap (main entry) |
-| `gateway/router.py` | Plan → ICR, else passthrough |
+| `gateway/router.py` | ICR routing + response shaping |
 | `refine.py` | ICR loop |
 | `config/models/test.env` | Small model settings |
 | `config/models/production.env` | 27B settings |

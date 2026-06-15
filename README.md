@@ -21,8 +21,10 @@ cd /workspace/local-ai-agent && bash scripts/install-on-pod.sh
 
 ```
 Cursor → https://<pod>-8787.proxy.runpod.net/v1
-           ├─ Plan  → ICR pipeline
-           └─ Agent → vLLM :8000
+           └─ every user turn → ICR pipeline first
+                ├─ Plan  → CreatePlan tool_calls
+                ├─ Agent → ICR context + vLLM tools
+                └─ Ask   → ICR answer text
 ```
 
 ## Makefile

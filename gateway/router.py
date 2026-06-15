@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Detect Cursor Plan-mode requests and build CreatePlan responses."""
+"""Route Cursor requests through ICR and build OpenAI responses."""
 
 from __future__ import annotations
 
@@ -10,6 +10,8 @@ import uuid
 from typing import Any
 
 from llm import content_to_text, load_env
+
+ICR_CONTEXT_MARKER = "[ICR refined context]"
 
 Message = dict[str, Any]
 
@@ -27,16 +29,29 @@ def find_plan_tool(tools: list[dict] | None) -> str | None:
     return None
 
 
-def is_plan_request(body: dict) -> tuple[bool, str | None]:
-    from gateway.config import icr_mode
+def is_user_turn(body: dict) -> bool:
+    messages = body.get("messages") or []
+    return bool(messages) and messages[-1].get("role") == "user"
 
-    plan_tool = find_plan_tool(body.get("tools"))
-    mode = icr_mode()
-    if mode == "off":
-        return False, plan_tool
-    if mode == "always":
-        return True, plan_tool or "CreatePlan"
-    return plan_tool is not None, plan_tool
+
+def is_agent_request(body: dict) -> bool:
+    """Agent/Ask with tools, but not Cursor Plan (CreatePlan)."""
+    tools = body.get("tools") or []
+    return bool(tools) and find_plan_tool(tools) is None
+
+
+def inject_icr_context(messages: list[Message], icr_text: str) -> list[Message]:
+    out: list[Message] = [dict(m) for m in messages]
+    for i in range(len(out) - 1, -1, -1):
+        if out[i].get("role") != "user":
+            continue
+        msg = dict(out[i])
+        existing = content_to_text(msg.get("content")).strip()
+        block = f"---\n{ICR_CONTEXT_MARKER}\n{icr_text.strip()}"
+        msg["content"] = f"{existing}\n\n{block}" if existing else block
+        out[i] = msg
+        break
+    return out
 
 
 def extract_task(messages: list[Message]) -> str:
@@ -93,6 +108,24 @@ def build_plan_arguments(state, run_dir, task: str) -> dict[str, Any]:
         "plan": plan_md,
         "todos": extract_plan_todos(plan_md),
         "isProject": False,
+    }
+
+
+def completion_with_content(body: dict, content: str) -> dict:
+    model = body.get("model") or load_env().get("MODEL_NAME", "Qwen/Qwen3.6-27B")
+    return {
+        "id": f"chatcmpl-icr-{uuid.uuid4().hex[:12]}",
+        "object": "chat.completion",
+        "created": int(time.time()),
+        "model": model,
+        "choices": [
+            {
+                "index": 0,
+                "message": {"role": "assistant", "content": content},
+                "finish_reason": "stop",
+            }
+        ],
+        "usage": {"prompt_tokens": 0, "completion_tokens": 0, "total_tokens": 0},
     }
 
 
@@ -194,6 +227,55 @@ def stream_chunks(completion: dict) -> list[str]:
             "created": created,
             "model": model,
             "choices": [{"index": 0, "delta": {}, "finish_reason": "tool_calls"}],
+        }
+    )
+    chunks.append("data: [DONE]\n\n")
+    return chunks
+
+
+def stream_text_chunks(completion: dict) -> list[str]:
+    cid = completion["id"]
+    model = completion["model"]
+    created = completion["created"]
+    text = completion["choices"][0]["message"]["content"] or ""
+    chunks: list[str] = []
+
+    def emit(obj: dict) -> None:
+        chunks.append(f"data: {json.dumps(obj, ensure_ascii=False)}\n\n")
+
+    emit(
+        {
+            "id": cid,
+            "object": "chat.completion.chunk",
+            "created": created,
+            "model": model,
+            "choices": [{"index": 0, "delta": {"role": "assistant"}, "finish_reason": None}],
+        }
+    )
+    step = max(1, len(text) // 40)
+    for i in range(0, len(text), step):
+        emit(
+            {
+                "id": cid,
+                "object": "chat.completion.chunk",
+                "created": created,
+                "model": model,
+                "choices": [
+                    {
+                        "index": 0,
+                        "delta": {"content": text[i : i + step]},
+                        "finish_reason": None,
+                    }
+                ],
+            }
+        )
+    emit(
+        {
+            "id": cid,
+            "object": "chat.completion.chunk",
+            "created": created,
+            "model": model,
+            "choices": [{"index": 0, "delta": {}, "finish_reason": "stop"}],
         }
     )
     chunks.append("data: [DONE]\n\n")
