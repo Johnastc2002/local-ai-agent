@@ -26,14 +26,7 @@ from gateway.cursor_protocol import (
     seed_messages_from_cursor,
 )
 from gateway.icr_session import IcrSession, PendingAgent
-from gateway.router import (
-    build_plan_arguments,
-    completion_with_content,
-    completion_with_plan_tool,
-    inject_icr_context,
-    stream_chunks,
-    stream_text_chunks,
-)
+from gateway.router import append_icr_for_agent
 from icr_prompts import load_icr_prompts
 from llm import load_env
 from refine import RefineState, resume_contextual_loop, run_contextual_loop
@@ -182,8 +175,11 @@ def resume_icr_state(body: dict, session: IcrSession) -> RefineState:
 
 
 def enrich_body_with_icr(body: dict, state: RefineState) -> dict:
-    icr_text = state.current_best_generation or "(empty)"
-    messages = inject_icr_context(body.get("messages") or [], icr_text)
+    """After ICR loop: feed agent with full Cursor thread + separate ICR result message."""
+    icr_text = state.current_best_generation or ""
+    if not icr_text.strip():
+        return body
+    messages = append_icr_for_agent(body.get("messages") or [], icr_text)
     return {**body, "messages": messages}
 
 

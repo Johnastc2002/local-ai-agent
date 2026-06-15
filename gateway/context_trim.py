@@ -279,11 +279,15 @@ def sanitize_tool_chain(messages: list[Message]) -> list[Message]:
     return fixed
 
 
-def trim_seed_from_cursor(body: dict, env: dict | None = None) -> list[Message]:
-    from gateway.cursor_protocol import seed_messages_from_cursor
+def trim_icr_loop_seed(body: dict, env: dict | None = None) -> list[Message]:
+    """Trim isolated ICR loop seed (system + latest user task only)."""
+    from gateway.cursor_protocol import icr_loop_seed_from_cursor
 
     env = env or load_env()
-    seed = seed_messages_from_cursor(body)
-    budget = context_input_budget(env)
-    min_tail = int(env.get("ICR_SEED_MIN_MESSAGES", "12"))
-    return trim_conversation_tail(seed, budget, min_tail_messages=min_tail)
+    seed = icr_loop_seed_from_cursor(body)
+    return trim_messages(seed, context_input_budget(env))
+
+
+def trim_seed_from_cursor(body: dict, env: dict | None = None) -> list[Message]:
+    """Alias — ICR loop uses isolated seed, not full chat history."""
+    return trim_icr_loop_seed(body, env)

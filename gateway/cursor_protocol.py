@@ -89,8 +89,27 @@ def icr_request_options(body: dict) -> dict[str, Any]:
 
 
 def seed_messages_from_cursor(body: dict) -> list[Message]:
-    """Full Cursor thread — system, user, assistant, tool (for ICR + conversation key)."""
+    """Full Cursor thread (conversation key, agent passthrough)."""
     return [dict(m) for m in body.get("messages") or []]
+
+
+def icr_loop_seed_from_cursor(body: dict) -> list[Message]:
+    """
+    ICR loop input only — system/developer rules + latest user task.
+    Assistant/tool turns stay out of the refinement loop.
+    """
+    messages = body.get("messages") or []
+    out: list[Message] = []
+    last_user: Message | None = None
+    for msg in messages:
+        role = msg.get("role")
+        if role in ("system", "developer"):
+            out.append(dict(msg))
+        elif role == "user":
+            last_user = dict(msg)
+    if last_user:
+        out.append(last_user)
+    return out
 
 
 def extract_task(body: dict) -> str:
@@ -114,8 +133,11 @@ def is_tool_result_turn(body: dict) -> bool:
 
 
 def conversation_key(body: dict) -> str:
-    seed_msgs = seed_messages_from_cursor(body)
-    payload = json.dumps(seed_msgs, sort_keys=True, ensure_ascii=False)
+    payload = json.dumps(
+        [dict(m) for m in body.get("messages") or []],
+        sort_keys=True,
+        ensure_ascii=False,
+    )
     return hashlib.sha256(payload.encode()).hexdigest()[:24]
 
 

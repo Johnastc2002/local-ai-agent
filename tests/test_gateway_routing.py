@@ -9,7 +9,7 @@ from gateway.cursor_protocol import (
     is_user_turn,
     find_plan_tool,
 )
-from gateway.router import inject_icr_context
+from gateway.router import append_icr_for_agent, inject_icr_context
 
 
 class GatewayRoutingTest(unittest.TestCase):
@@ -55,12 +55,29 @@ class GatewayRoutingTest(unittest.TestCase):
             {"role": "assistant", "content": "first answer"},
             {"role": "user", "content": "follow up"},
         ]
-        out = inject_icr_context(msgs, "refined plan text")
-        self.assertEqual(len(out), 4)
+        out = append_icr_for_agent(msgs, "refined plan text")
+        self.assertEqual(out[0]["content"], "first question")
+        self.assertEqual(out[1]["content"], "first answer")
         self.assertEqual(out[-1]["content"], "follow up")
         self.assertEqual(out[-2]["role"], "developer")
         self.assertIn("refined plan text", out[-2]["content"])
-        self.assertIn("[ICR refined context]", out[-2]["content"])
+        self.assertNotIn("refined plan text", out[-1]["content"])
+
+    def test_icr_loop_seed_isolated(self):
+        from gateway.cursor_protocol import icr_loop_seed_from_cursor
+
+        body = {
+            "messages": [
+                {"role": "system", "content": "rules"},
+                {"role": "user", "content": "first"},
+                {"role": "assistant", "content": "answer one"},
+                {"role": "user", "content": "second"},
+            ]
+        }
+        seed = icr_loop_seed_from_cursor(body)
+        self.assertEqual(len(seed), 2)
+        self.assertEqual(seed[0]["role"], "system")
+        self.assertEqual(seed[-1]["content"], "second")
 
     def test_trim_keeps_history_after_icr(self):
         from gateway.context_trim import trim_conversation_tail

@@ -30,11 +30,18 @@ def is_agent_request(body: dict) -> bool:
 
 def inject_icr_context(messages: list[Message], icr_text: str) -> list[Message]:
     """
-    Attach ICR output as a developer message before the latest user turn.
-    Do NOT append to the last user message — that bloats it and trim drops prior turns.
+    Post-loop only: add ICR result as its own message — never merge into user text.
+    Inserts a developer message immediately before the latest user turn.
     """
+    return append_icr_for_agent(messages, icr_text)
+
+
+def append_icr_for_agent(messages: list[Message], icr_text: str) -> list[Message]:
+    """Append ICR output after the loop; Cursor thread messages are left unchanged."""
     out: list[Message] = [dict(m) for m in messages]
     icr = icr_text.strip()
+    if not icr:
+        return out
     if len(icr) > ICR_MAX_CHARS:
         icr = icr[:ICR_MAX_CHARS] + "\n[... ICR truncated ...]"
     block = f"{ICR_CONTEXT_MARKER}\n{icr}"
