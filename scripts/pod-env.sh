@@ -9,6 +9,8 @@ ROOT="${ROOT:-$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)}"
 cd "$ROOT"
 
 PROFILE="${MODEL_PROFILE:-test}"
+# .env contains MODEL_PROFILE=test — never let it override an explicit CLI value
+CLI_PROFILE="${MODEL_PROFILE:-}"
 ENV_FILE="$ROOT/.env"
 PROFILE_FILE="$ROOT/config/models/${PROFILE}.env"
 LOG_DIR="$ROOT/runs"
@@ -27,9 +29,14 @@ fi
 set -a
 # shellcheck disable=SC1090
 source "$ENV_FILE"
+if [[ -n "$CLI_PROFILE" ]]; then
+  export MODEL_PROFILE="$CLI_PROFILE"
+  PROFILE="$CLI_PROFILE"
+fi
 # shellcheck disable=SC1090
 source "$PROFILE_FILE"
 set +a
+export MODEL_PROFILE="$PROFILE"
 
 export HF_HOME="${HF_HOME:-/workspace/.cache/huggingface}"
 export HUGGINGFACE_HUB_CACHE="${HUGGINGFACE_HUB_CACHE:-$HF_HOME/hub}"
@@ -64,28 +71,11 @@ pod_clear_download_locks() {
 }
 
 pod_model_is_cached() {
-  python3 -c "
-from huggingface_hub import try_to_load_from_cache
-import sys
-path = try_to_load_from_cache(
-    '${MODEL_NAME}',
-    'config.json',
-    cache_dir='${HUGGINGFACE_HUB_CACHE}',
-)
-sys.exit(0 if path else 1)
-" 2>/dev/null
+  python3 "$ROOT/scripts/model_cache.py" is-cached "$MODEL_NAME" "$HUGGINGFACE_HUB_CACHE" --min-gb "${MIN_MODEL_CACHE_GB:-1}"
 }
 
 pod_model_cache_path() {
-  python3 -c "
-from huggingface_hub import try_to_load_from_cache
-path = try_to_load_from_cache(
-    '${MODEL_NAME}',
-    'config.json',
-    cache_dir='${HUGGINGFACE_HUB_CACHE}',
-)
-print(path or '')
-"
+  python3 "$ROOT/scripts/model_cache.py" info "$MODEL_NAME" "$HUGGINGFACE_HUB_CACHE" 2>/dev/null | awk -F= '/^hub=/{print $2; exit}'
 }
 
 pod_activate_venv() {

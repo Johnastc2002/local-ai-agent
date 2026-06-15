@@ -22,7 +22,7 @@ echo "Log:      $DOWNLOAD_LOG"
 
 if pod_model_is_cached && [[ "${FORCE:-}" != "1" ]]; then
   echo "Already cached — skipping download."
-  bash "$ROOT/scripts/cache-diagnose.sh"
+  MODEL_PROFILE="$PROFILE" bash "$ROOT/scripts/cache-diagnose.sh"
   exit 0
 fi
 
