@@ -13,6 +13,7 @@ Set ICR_MODE=off to passthrough everything (debug only).
 
 from __future__ import annotations
 
+import asyncio
 import json
 import sys
 
@@ -85,7 +86,7 @@ async def chat_completions(request: Request):
         session = IcrSession.load_by_tool_ids(pending_tool_call_ids(body.get("messages") or []))
         if session:
             try:
-                state = resume_icr_state(body, session)
+                state = await asyncio.to_thread(resume_icr_state, body, session)
                 if plan_tool:
                     completion = finish_icr(body, state, plan_tool)
                     if body.get("stream"):
@@ -108,19 +109,21 @@ async def chat_completions(request: Request):
     try:
         if plan_tool:
             if body.get("stream"):
-                chunks = run_icr_plan_stream(body, plan_tool_name=plan_tool)
+                chunks = await asyncio.to_thread(run_icr_plan_stream, body, plan_tool)
                 return StreamingResponse(iter(chunks), media_type="text/event-stream")
-            return JSONResponse(run_icr_plan(body, plan_tool_name=plan_tool))
+            completion = await asyncio.to_thread(run_icr_plan, body, plan_tool_name=plan_tool)
+            return JSONResponse(completion)
 
         if is_agent_request(body):
-            state = run_icr_state(body)
+            state = await asyncio.to_thread(run_icr_state, body)
             enriched_raw = json.dumps(enrich_body_with_icr(body, state)).encode()
             return await forward("POST", "/v1/chat/completions", request, enriched_raw)
 
         if body.get("stream"):
-            chunks = run_icr_answer_stream(body)
+            chunks = await asyncio.to_thread(run_icr_answer_stream, body)
             return StreamingResponse(iter(chunks), media_type="text/event-stream")
-        return JSONResponse(run_icr_answer(body))
+        completion = await asyncio.to_thread(run_icr_answer, body)
+        return JSONResponse(completion)
     except IcrPaused as paused:
         return _paused_response(body, paused.completion)
     except Exception as exc:
