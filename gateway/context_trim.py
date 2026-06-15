@@ -18,7 +18,8 @@ def clamp_max_tokens(value: Any, env: dict | None = None) -> int:
         n = 0
     if n < 1:
         n = default
-    return min(n, 8192)
+    cap = int(env.get("REFINE_MAX_TOKENS_CAP", "8192"))
+    return min(n, cap)
 
 
 def estimate_tokens(text: str) -> int:

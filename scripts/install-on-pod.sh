@@ -3,6 +3,7 @@
 #
 #   bash scripts/install-on-pod.sh
 #   MODEL_PROFILE=production bash scripts/install-on-pod.sh
+#   MODEL_PROFILE=production-500k bash scripts/install-on-pod.sh   # H200, ~524k context
 #
 # RunPod PyTorch pods have no Docker. This script uses native Python + vLLM.
 # Optional Docker path: bash optional/install-docker.sh
@@ -105,18 +106,49 @@ if [[ "$need_vllm_start" -eq 1 ]]; then
   fi
 
   echo "Starting vLLM on :${vllm_port} (log: ${LOG_DIR}/vllm.log, max-model-len=${want_len})"
-  nohup vllm serve "$MODEL_NAME" \
-    --max-model-len "${want_len}" \
-    --gpu-memory-utilization "${GPU_MEMORY_UTILIZATION:-0.90}" \
-    --enable-auto-tool-choice \
-    --tool-call-parser "${TOOL_CALL_PARSER:-hermes}" \
-    --host 0.0.0.0 \
-    --port "$vllm_port" \
-    >"$LOG_DIR/vllm.log" 2>&1 &
+
+  vllm_args=(
+    serve "$MODEL_NAME"
+    --max-model-len "${want_len}"
+    --gpu-memory-utilization "${GPU_MEMORY_UTILIZATION:-0.90}"
+    --host 0.0.0.0
+    --port "$vllm_port"
+  )
+  if [[ -n "${TOOL_CALL_PARSER:-}" ]]; then
+    vllm_args+=(--tool-call-parser "$TOOL_CALL_PARSER")
+  fi
+  if [[ "${ENABLE_AUTO_TOOL_CHOICE:-}" == "true" ]]; then
+    vllm_args+=(--enable-auto-tool-choice)
+  fi
+  if [[ -n "${REASONING_PARSER:-}" ]]; then
+    vllm_args+=(--reasoning-parser "$REASONING_PARSER")
+  fi
+  if [[ -n "${VLLM_KV_CACHE_DTYPE:-}" ]]; then
+    vllm_args+=(--kv-cache-dtype "$VLLM_KV_CACHE_DTYPE")
+  fi
+  if [[ "${VLLM_LANGUAGE_MODEL_ONLY:-}" == "true" ]]; then
+    vllm_args+=(--language-model-only)
+  fi
+  if [[ -n "${VLLM_TENSOR_PARALLEL_SIZE:-}" && "${VLLM_TENSOR_PARALLEL_SIZE}" -gt 1 ]]; then
+    vllm_args+=(--tensor-parallel-size "$VLLM_TENSOR_PARALLEL_SIZE")
+  fi
+  yarn_file="config/models/${PROFILE}-yarn.json"
+  if [[ -f "$yarn_file" ]]; then
+    vllm_args+=(--hf-overrides "$(tr -d '\n' <"$yarn_file")")
+  fi
+  if [[ "${VLLM_ALLOW_LONG_MAX_MODEL_LEN:-}" == "1" ]]; then
+    export VLLM_ALLOW_LONG_MAX_MODEL_LEN=1
+  fi
+
+  nohup vllm "${vllm_args[@]}" >"$LOG_DIR/vllm.log" 2>&1 &
   echo $! >"$VLLM_PID"
 
-  echo "Waiting for vLLM (first boot downloads model — 5–15 min)..."
-  for _ in $(seq 1 120); do
+  echo "Waiting for vLLM (first boot downloads model — 5–30 min for large models)..."
+  vllm_wait=120
+  if [[ "${MAX_MODEL_LEN:-0}" -gt 100000 ]]; then
+    vllm_wait=240
+  fi
+  for _ in $(seq 1 "$vllm_wait"); do
     if curl -fsS "http://127.0.0.1:${vllm_port}/v1/models" >/dev/null 2>&1; then
       echo "vLLM ready."
       break

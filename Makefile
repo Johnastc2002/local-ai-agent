@@ -17,7 +17,7 @@ help:
 	@echo ""
 	@echo "  make start | stop | status | wait | wait-all"
 	@echo ""
-	@echo "Model profiles: MODEL_PROFILE=test (default, Qwen2.5-3B) or production"
+	@echo "Model profiles: test | production | production-500k (H200, ~524k ctx)"
 
 # --- Mac workflow ---
 
@@ -67,13 +67,24 @@ pod-up:
 	@echo "  bash scripts/pod-status.sh    # check"
 	@echo "  bash scripts/pod-logs.sh      # watch first boot"
 	@echo ""
-	@echo "Production model:"
+	@echo "Production 500k (H200):"
+	@echo "  MODEL_PROFILE=production-500k bash scripts/install-on-pod.sh"
+	@echo ""
+	@echo "Production 32k:"
 	@echo "  MODEL_PROFILE=production bash scripts/install-on-pod.sh"
 	@echo ""
 	@echo "Full runbook: docs/MANUAL.md"
 
 pod-up-prod:
 	@echo "  cd /workspace/local-ai-agent && MODEL_PROFILE=production bash scripts/install-on-pod.sh"
+
+pod-up-prod-500k:
+	@echo "=== RunPod: H200 SXM (141 GB) recommended ==="
+	@echo "  cd /workspace/local-ai-agent && git pull && MODEL_PROFILE=production-500k bash scripts/install-on-pod.sh"
+	@echo ""
+	@echo "Verify context:"
+	@echo "  curl -s http://127.0.0.1:8000/v1/models | python3 -c \"import json,sys; print(json.load(sys.stdin)['data'][0]['max_model_len'])\""
+	@echo "  # expect 524288"
 
 # --- RunPod control ---
 

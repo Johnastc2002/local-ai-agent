@@ -13,7 +13,7 @@ echo "[2/3] Unit tests..."
 python3 -m unittest discover -s tests -p 'test_*.py' -v
 
 echo "[3/3] Required files..."
-for f in gateway/app.py refine.py agent_call.py scripts/install-on-pod.sh config/models/test.env; do
+for f in gateway/app.py refine.py agent_call.py scripts/install-on-pod.sh config/models/test.env config/models/production-500k.env config/models/production-500k-yarn.json; do
   test -f "$f" || { echo "MISSING $f"; exit 1; }
 done
 

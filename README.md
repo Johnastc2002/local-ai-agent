@@ -36,4 +36,4 @@ Cursor → https://<pod>-8787.proxy.runpod.net/v1
 | `make test-gateway` | Mac — quick smoke test |
 | `make stop` | Mac — stop pod |
 
-Default model: **`Qwen/Qwen2.5-3B-Instruct`** (`MODEL_PROFILE=test`). Production: `Qwen/Qwen3.6-27B`.
+Default model: **`Qwen/Qwen2.5-3B-Instruct`** (`MODEL_PROFILE=test`). Production: `Qwen/Qwen3.6-27B`. Long context: `production-500k` (~524k, H200).

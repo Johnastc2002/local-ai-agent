@@ -14,7 +14,11 @@ from gateway.context_trim import estimate_usage
 from gateway.cursor_protocol import find_plan_tool, is_agent_request as _is_agent_request
 
 ICR_CONTEXT_MARKER = "[ICR refined context]"
-ICR_MAX_CHARS = 8000
+
+
+def icr_max_chars(env: dict | None = None) -> int:
+    env = env or load_env()
+    return int(env.get("ICR_MAX_CHARS", "8000"))
 
 Message = dict[str, Any]
 
@@ -43,8 +47,8 @@ def append_icr_for_agent(messages: list[Message], icr_text: str) -> list[Message
     icr = icr_text.strip()
     if not icr:
         return out
-    if len(icr) > ICR_MAX_CHARS:
-        icr = icr[:ICR_MAX_CHARS] + "\n[... ICR truncated ...]"
+    if len(icr) > icr_max_chars():
+        icr = icr[: icr_max_chars()] + "\n[... ICR truncated ...]"
     block = f"{ICR_CONTEXT_MARKER}\n{icr}"
 
     insert_at = len(out)
