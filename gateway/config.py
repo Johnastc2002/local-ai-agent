@@ -16,7 +16,7 @@ def vllm_upstream() -> str:
     explicit = os.environ.get("VLLM_UPSTREAM", "").strip()
     if explicit:
         return explicit.rstrip("/")
-    # Gateway runs on the RunPod pod next to vLLM (see scripts/pod-start-gateway.sh)
+    # Gateway runs on the RunPod pod next to vLLM (see scripts/install-on-pod.sh)
     if os.environ.get("GATEWAY_ON_POD", "").lower() in ("1", "true", "yes"):
         port = os.environ.get("RUNPOD_PORT", "8000")
         return f"http://127.0.0.1:{port}"

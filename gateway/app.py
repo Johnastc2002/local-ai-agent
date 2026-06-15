@@ -4,7 +4,7 @@ OpenAI-compatible ICR gateway for Cursor BYOK.
 
 Run on the RunPod pod (not your Mac):
 
-  bash scripts/pod-start-gateway.sh
+  bash scripts/install-on-pod.sh
 
 Cursor BYOK → https://<POD_ID>-8787.proxy.runpod.net/v1
   Plan (CreatePlan in tools) → ICR pipeline

@@ -42,13 +42,23 @@ mn=re.search(r'^MODEL_NAME=(.+)', lines, re.M); print('Custom model:        ', m
 	@echo ""
 
 pod-up:
-	@echo "Run this ONCE in the RunPod web terminal:"
+	@echo "=== RunPod pod template ==="
+	@echo "  Image:   runpod/pytorch:2.4.0-py3.11-cuda12.4.1-devel-ubuntu22.04"
+	@echo "  Volume:  /workspace (80 GB)"
+	@echo "  Ports:   8000,8787"
+	@echo ""
+	@echo "=== Run ONCE in RunPod web terminal ==="
 	@echo ""
 	@echo "  git clone https://github.com/Johnastc2002/local-ai-agent.git /workspace/local-ai-agent"
-	@echo "  cd /workspace/local-ai-agent && cp .env.example .env && bash scripts/install-on-pod.sh"
+	@echo "  cd /workspace/local-ai-agent && bash scripts/install-on-pod.sh"
+	@echo ""
+	@echo "  bash scripts/pod-status.sh    # check"
+	@echo "  bash scripts/pod-logs.sh      # watch first boot"
 	@echo ""
 	@echo "Production model:"
 	@echo "  MODEL_PROFILE=production bash scripts/install-on-pod.sh"
+	@echo ""
+	@echo "Full runbook: docs/MANUAL.md"
 
 pod-up-prod:
 	@echo "  cd /workspace/local-ai-agent && MODEL_PROFILE=production bash scripts/install-on-pod.sh"

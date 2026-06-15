@@ -1,52 +1,8 @@
-# RunPod pod setup — vLLM + ICR gateway (both on pod)
+# Deprecated — see docs/MANUAL.md
 
-Nothing runs on your Mac except Cursor and `make start/stop`.
-
-## Pod template ports
-
-| Port | Process |
-|---|---|
-| 8000 | vLLM (Qwen3.6-27B) |
-| 8787 | ICR gateway |
-
-## First boot on pod
+All pod setup is in **docs/MANUAL.md §3**.
 
 ```bash
-# Clone on pod network volume
 git clone https://github.com/Johnastc2002/local-ai-agent.git /workspace/local-ai-agent
-git clone https://github.com/ryoiki-tokuiten/Iterative-Contextual-Refinements /workspace/Iterative-Contextual-Refinements
-
-cd /workspace/local-ai-agent
-cp .env.example .env
-# Edit: ICR_REPO=/workspace/Iterative-Contextual-Refinements
-
-# After vLLM is up on :8000:
-bash scripts/pod-start-gateway.sh
+cd /workspace/local-ai-agent && bash scripts/install-on-pod.sh
 ```
-
-Gateway env (set automatically by script):
-
-```
-GATEWAY_ON_POD=1
-VLLM_UPSTREAM=http://127.0.0.1:8000
-PROXY_PORT=8787
-```
-
-## Cursor on Mac
-
-```
-make gateway-url
-# → https://<POD_ID>-8787.proxy.runpod.net/v1
-```
-
-Paste into Cursor Settings → Override OpenAI Base URL.
-
-## Optional: RunPod start command
-
-Add to pod template so gateway starts after vLLM:
-
-```bash
-bash /workspace/local-ai-agent/scripts/pod-start-gateway.sh
-```
-
-Use `tmux` or a process supervisor if vLLM and gateway start separately.

@@ -1,7 +1,5 @@
-# Build/run on RunPod pod only (needs NVIDIA GPU for vllm service).
-#
-# Mac: make pod-up   (prints one-liner for pod terminal)
-# Pod: bash scripts/install-on-pod.sh
+# Optional Docker Compose (needs Docker on pod — rare on RunPod).
+# Normal setup: bash scripts/install-on-pod.sh
 
 services:
   vllm:
@@ -45,8 +43,8 @@ services:
 
   gateway:
     build:
-      context: .
-      dockerfile: Dockerfile
+      context: ..
+      dockerfile: optional/Dockerfile
     restart: unless-stopped
     ports:
       - "${GATEWAY_PORT:-8787}:8787"
