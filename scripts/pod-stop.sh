@@ -23,4 +23,4 @@ stop_pid() {
 
 stop_pid gateway
 stop_pid vllm
-echo "Done. Start again: bash scripts/install-on-pod.sh"
+echo "Done. Start again: MODEL_PROFILE=\${MODEL_PROFILE:-test} bash scripts/start-services.sh"

@@ -8,12 +8,24 @@
 
 **Mac** — `cp .env.example .env` → fill `RUNPOD_API_KEY`, `RUNPOD_POD_ID`
 
-**Pod** — RunPod web terminal:
+**Pod** — three separate steps (download once, restart without re-download):
 
 ```bash
+export HF_HOME=/workspace/.cache/huggingface
 git clone https://github.com/Johnastc2002/local-ai-agent.git /workspace/local-ai-agent
-cd /workspace/local-ai-agent && bash scripts/install-on-pod.sh
+cd /workspace/local-ai-agent
+
+# 1. Download weights once (CPU pod OK)
+MODEL_PROFILE=production-500k bash scripts/download-model.sh
+
+# 2. Setup deps once (GPU pod)
+MODEL_PROFILE=production-500k bash scripts/setup-pod.sh
+
+# 3. Start / restart anytime (no download)
+MODEL_PROFILE=production-500k bash scripts/start-services.sh
 ```
+
+After a bug fix: `bash scripts/pod-stop.sh && git pull && bash scripts/start-services.sh`
 
 **Mac** — `make ready` → paste `make cursor-config` into Cursor Settings → Models
 

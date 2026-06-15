@@ -35,5 +35,7 @@ for label in vllm gateway; do
 done
 
 echo ""
-echo "Logs: tail -f ${LOG_DIR}/vllm.log ${LOG_DIR}/gateway.log"
-echo "Restart: bash scripts/install-on-pod.sh"
+echo "Model:  bash scripts/model-status.sh"
+echo "Logs:   tail -f ${LOG_DIR}/vllm.log ${LOG_DIR}/gateway.log"
+echo "Stop:   bash scripts/pod-stop.sh"
+echo "Start:  MODEL_PROFILE=\${MODEL_PROFILE:-test} bash scripts/start-services.sh"

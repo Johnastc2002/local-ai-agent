@@ -60,17 +60,40 @@ Get pod ID from the RunPod console URL or `make list`.
 
 ## 3. Pod setup (once per volume)
 
-Open **RunPod web terminal** on your pod:
+**Download and run are separate** — a failed start does not re-download ~30 GB.
+
+### 3a. Download model (once; cheap CPU pod OK)
+
+Same `/workspace` volume — no GPU needed:
 
 ```bash
+export HF_HOME=/workspace/.cache/huggingface
 git clone https://github.com/Johnastc2002/local-ai-agent.git /workspace/local-ai-agent
 cd /workspace/local-ai-agent
-bash scripts/install-on-pod.sh
+MODEL_PROFILE=production-500k bash scripts/download-model.sh
+bash scripts/model-status.sh   # must say CACHED
 ```
 
-The script creates `.env`, clones ICR prompts, clones **your codebase** (see §3b), installs vLLM, starts both services.
+### 3b. GPU pod — setup + start
 
-### 3b. How ICR gets your code (standard Cursor protocol)
+```bash
+bash scripts/check-gpu-env.sh          # driver >= 12090 — redeploy if not
+MODEL_PROFILE=production-500k bash scripts/setup-pod.sh
+MODEL_PROFILE=production-500k bash scripts/start-services.sh
+bash scripts/pod-status.sh
+```
+
+### 3c. Restart after bug fix (no re-download)
+
+```bash
+bash scripts/pod-stop.sh
+git pull
+MODEL_PROFILE=production-500k bash scripts/start-services.sh
+```
+
+`install-on-pod.sh` still works (setup + start) but never downloads — run `download-model.sh` first.
+
+### 3d. How ICR gets your code (standard Cursor protocol)
 
 **No pod clone required.** Cursor BYOK already sends:
 
