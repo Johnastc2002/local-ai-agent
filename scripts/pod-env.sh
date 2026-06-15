@@ -33,6 +33,7 @@ set +a
 
 export HF_HOME="${HF_HOME:-/workspace/.cache/huggingface}"
 export HUGGINGFACE_HUB_CACHE="${HUGGINGFACE_HUB_CACHE:-$HF_HOME/hub}"
+export HF_HUB_CACHE="${HF_HUB_CACHE:-$HUGGINGFACE_HUB_CACHE}"
 mkdir -p "$HF_HOME" "$HUGGINGFACE_HUB_CACHE" "$LOG_DIR"
 
 ICR_HOST="${ICR_REPO_HOST:-/workspace/Iterative-Contextual-Refinements}"
