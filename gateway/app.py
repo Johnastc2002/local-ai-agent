@@ -22,7 +22,7 @@ from fastapi import FastAPI, Request
 from fastapi.responses import JSONResponse, StreamingResponse
 
 from gateway.audit_log import log_request
-from gateway.config import icr_agent_mode, icr_ask_mode, icr_mode, proxy_port, vllm_upstream
+from gateway.config import icr_mode, proxy_port, vllm_upstream
 from gateway.cursor_protocol import is_tool_result_turn, is_user_turn, pending_tool_call_ids
 from gateway.icr_plan import (
     IcrPaused,
@@ -36,7 +36,7 @@ from gateway.icr_plan import (
     run_icr_state,
 )
 from gateway.icr_session import IcrSession
-from gateway.passthrough import forward
+from gateway.passthrough import forward, forward_chat_completion
 from gateway.router import find_plan_tool, is_agent_request, stream_chunks, stream_text_chunks
 
 app = FastAPI(title="ICR Gateway", version="1.0")
@@ -77,7 +77,7 @@ async def chat_completions(request: Request):
         return await forward("POST", "/v1/chat/completions", request, raw)
 
     if icr_mode() == "off":
-        return await forward("POST", "/v1/chat/completions", request, raw)
+        return await forward_chat_completion(body, request)
 
     log_request(body)
     plan_tool = find_plan_tool(body.get("tools"))
@@ -93,18 +93,18 @@ async def chat_completions(request: Request):
                         return StreamingResponse(iter(stream_chunks(completion)), media_type="text/event-stream")
                     return JSONResponse(completion)
                 if is_agent_request(body):
-                    enriched_raw = json.dumps(enrich_body_with_icr(body, state)).encode()
-                    return await forward("POST", "/v1/chat/completions", request, enriched_raw)
+                    enriched = enrich_body_with_icr(body, state)
+                    return await forward_chat_completion(enriched, request)
                 completion = finish_icr(body, state, None)
                 if body.get("stream"):
                     return StreamingResponse(iter(stream_text_chunks(completion)), media_type="text/event-stream")
                 return JSONResponse(completion)
             except IcrPaused as paused:
                 return _paused_response(body, paused.completion)
-        return await forward("POST", "/v1/chat/completions", request, raw)
+        return await forward_chat_completion(body, request)
 
     if not is_user_turn(body):
-        return await forward("POST", "/v1/chat/completions", request, raw)
+        return await forward_chat_completion(body, request)
 
     try:
         if plan_tool:
@@ -115,15 +115,9 @@ async def chat_completions(request: Request):
             return JSONResponse(completion)
 
         if is_agent_request(body):
-            if icr_agent_mode() in ("off", "passthrough", "false", "0"):
-                return await forward("POST", "/v1/chat/completions", request, raw)
             state = await asyncio.to_thread(run_icr_state, body)
-            enriched_raw = json.dumps(enrich_body_with_icr(body, state)).encode()
-            return await forward("POST", "/v1/chat/completions", request, enriched_raw)
-
-        # Ask (no plan tools, no agent tools)
-        if icr_ask_mode() in ("off", "passthrough", "false", "0"):
-            return await forward("POST", "/v1/chat/completions", request, raw)
+            enriched = enrich_body_with_icr(body, state)
+            return await forward_chat_completion(enriched, request)
 
         if body.get("stream"):
             chunks = await asyncio.to_thread(run_icr_answer_stream, body)
