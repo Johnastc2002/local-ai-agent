@@ -71,18 +71,39 @@ if ! python -c "import vllm" 2>/dev/null; then
 fi
 
 vllm_port="${RUNPOD_PORT:-8000}"
+want_len="${MAX_MODEL_LEN:-8192}"
+want_model="$MODEL_NAME"
+need_vllm_start=1
 if curl -fsS "http://127.0.0.1:${vllm_port}/v1/models" >/dev/null 2>&1; then
-  echo "vLLM already listening on :${vllm_port}"
-else
-  if [[ -f "$VLLM_PID" ]] && kill -0 "$(cat "$VLLM_PID")" 2>/dev/null; then
+  read -r got_model got_len <<< "$(curl -fsS "http://127.0.0.1:${vllm_port}/v1/models" | python3 -c "
+import json, sys
+d = json.load(sys.stdin)['data'][0]
+print(d.get('id',''), d.get('max_model_len',''))
+" 2>/dev/null || echo '  ')"
+  if [[ "$got_model" == "$want_model" && "$got_len" == "$want_len" ]]; then
+    need_vllm_start=0
+    echo "vLLM already listening on :${vllm_port} (${got_model}, max_len=${got_len})"
+  else
+    echo "vLLM config changed (have ${got_model}@${got_len}, want ${want_model}@${want_len}) — restarting"
+    if [[ -f "$VLLM_PID" ]] && kill -0 "$(cat "$VLLM_PID")" 2>/dev/null; then
+      kill "$(cat "$VLLM_PID")" || true
+      sleep 3
+    fi
+  fi
+fi
+
+if [[ "$need_vllm_start" -eq 1 ]]; then
+  if curl -fsS "http://127.0.0.1:${vllm_port}/v1/models" >/dev/null 2>&1; then
+    : # killed above
+  elif [[ -f "$VLLM_PID" ]] && kill -0 "$(cat "$VLLM_PID")" 2>/dev/null; then
     echo "Stopping previous vLLM (pid $(cat "$VLLM_PID"))"
     kill "$(cat "$VLLM_PID")" || true
     sleep 2
   fi
 
-  echo "Starting vLLM on :${vllm_port} (log: ${LOG_DIR}/vllm.log)"
+  echo "Starting vLLM on :${vllm_port} (log: ${LOG_DIR}/vllm.log, max-model-len=${want_len})"
   nohup vllm serve "$MODEL_NAME" \
-    --max-model-len "${MAX_MODEL_LEN:-8192}" \
+    --max-model-len "${want_len}" \
     --gpu-memory-utilization "${GPU_MEMORY_UTILIZATION:-0.90}" \
     --enable-auto-tool-choice \
     --tool-call-parser "${TOOL_CALL_PARSER:-hermes}" \

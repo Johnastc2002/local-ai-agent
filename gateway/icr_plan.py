@@ -14,6 +14,7 @@ from agent_call import (
     continue_contextual_agent,
 )
 from attachments import load_seed_images
+from gateway.context_trim import trim_seed_from_cursor
 from gateway.cursor_protocol import (
     completion_from_assistant,
     conversation_key,
@@ -92,7 +93,7 @@ def _loop_kwargs(body: dict, env: dict) -> dict[str, Any]:
     prompts = load_icr_prompts()
     run_dir = RUNS / datetime.now().strftime("%Y%m%d-%H%M%S")
 
-    seed = seed_messages_from_cursor(body)
+    seed = trim_seed_from_cursor(body, env)
     if not seed:
         from llm import user_message
 
