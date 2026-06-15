@@ -29,7 +29,7 @@ show_dir "Home cache (~/.cache):" "${HOME}/.cache/huggingface/hub"
 show_dir "Root cache (/root/.cache):" "/root/.cache/huggingface/hub"
 
 echo "Download process:"
-if pgrep -af 'huggingface-cli download' 2>/dev/null; then
+if pgrep -af 'hf download|huggingface-cli download' 2>/dev/null; then
   echo "  (running — if size only grows under ~/.cache, export HF_HOME=/workspace/.cache/huggingface)"
 else
   echo "  none running"

@@ -77,3 +77,14 @@ pod_activate_venv() {
   # shellcheck disable=SC1091
   source "$ROOT/.venv/bin/activate"
 }
+
+# Prefer `hf` (huggingface_hub >= 0.34); fall back to legacy huggingface-cli.
+pod_hf() {
+  if command -v hf >/dev/null 2>&1; then
+    hf "$@"
+  elif command -v huggingface-cli >/dev/null 2>&1; then
+    huggingface-cli "$@"
+  else
+    python3 -m huggingface_hub.cli.hf "$@"
+  fi
+}

@@ -18,20 +18,13 @@ echo "Model:    $MODEL_NAME"
 echo "HF cache: $HUGGINGFACE_HUB_CACHE"
 
 if pod_model_is_cached && [[ "${FORCE:-}" != "1" ]]; then
-  echo "Already cached — skipping download."
-  du -sh "$HUGGINGFACE_HUB_CACHE" 2>/dev/null || true
-  pod_model_cache_path | head -1
-  exit 0
-fi
-
-if pod_model_is_cached && [[ "${FORCE:-}" != "1" ]]; then
   echo "Already cached — skipping download (du will NOT change)."
   bash "$ROOT/scripts/cache-diagnose.sh"
   exit 0
 fi
 
 pod_activate_venv
-pip install -U pip huggingface_hub tqdm
+pip install -U pip "huggingface_hub[cli]" tqdm
 if [[ "${HF_TRANSFER:-}" == "1" ]] && pip install hf_transfer 2>/dev/null; then
   export HF_HUB_ENABLE_HF_TRANSFER=1
   echo "Using hf_transfer (parallel downloads)"
@@ -42,7 +35,7 @@ fi
 export HF_HUB_DISABLE_PROGRESS_BARS=0
 
 echo ""
-echo "Downloading (per-file progress below; resume supported)..."
+echo "Downloading via: $(command -v hf || command -v huggingface-cli || echo 'python -m huggingface_hub.cli.hf')"
 echo "Cache monitor (embedded — also run: bash scripts/cache-diagnose.sh)"
 echo ""
 
@@ -61,7 +54,7 @@ WATCH_PID=$!
 cleanup_watch() { rm -f "$WATCH_FLAG"; kill "$WATCH_PID" 2>/dev/null || true; }
 trap cleanup_watch EXIT
 
-huggingface-cli download "$MODEL_NAME" \
+pod_hf download "$MODEL_NAME" \
   --cache-dir "$HUGGINGFACE_HUB_CACHE" \
   --resume-download \
   --max-workers "${HF_MAX_WORKERS:-4}"
