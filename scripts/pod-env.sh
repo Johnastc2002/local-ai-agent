@@ -45,6 +45,24 @@ export PROXY_PORT="${GATEWAY_PORT:-8787}"
 export RUNPOD_API_KEY="${RUNPOD_API_KEY:-local}"
 export VLLM_WORKER_MULTIPROC_METHOD="${VLLM_WORKER_MULTIPROC_METHOD:-spawn}"
 
+pod_model_slug() {
+  echo "models--${MODEL_NAME//\//--}"
+}
+
+pod_model_hub_dir() {
+  echo "${HUGGINGFACE_HUB_CACHE}/$(pod_model_slug)"
+}
+
+pod_clear_download_locks() {
+  local slug lock_dir
+  slug="$(pod_model_slug)"
+  lock_dir="${HUGGINGFACE_HUB_CACHE}/.locks/${slug}"
+  if [[ -d "$lock_dir" ]]; then
+    echo "Removing stale download locks: $lock_dir"
+    rm -rf "$lock_dir"
+  fi
+}
+
 pod_model_is_cached() {
   python3 -c "
 from huggingface_hub import try_to_load_from_cache
