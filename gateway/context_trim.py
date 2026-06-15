@@ -54,8 +54,17 @@ def _trim_content(msg: Message, char_budget: int) -> Message:
     return item
 
 
-def trim_conversation_tail(messages: list[Message], budget_tokens: int) -> list[Message]:
+def trim_conversation_tail(
+    messages: list[Message],
+    budget_tokens: int,
+    *,
+    min_tail_messages: int | None = None,
+) -> list[Message]:
     """Keep prefix system/dev + newest tail (incl. tool turns) within budget."""
+    env = load_env()
+    if min_tail_messages is None:
+        min_tail_messages = int(env.get("MIN_TAIL_MESSAGES", "20"))
+
     if not messages or budget_tokens <= 0:
         return list(messages)
 
@@ -83,12 +92,17 @@ def trim_conversation_tail(messages: list[Message], budget_tokens: int) -> list[
     tail_used = 0
     for msg in reversed(rest):
         need = message_tokens(msg)
-        if tail_used + need > tail_budget and kept_rev:
-            break
         item = dict(msg)
         if tail_used + need > tail_budget:
-            item = _trim_content(item, max(400, (tail_budget - tail_used) * 4))
-            need = message_tokens(item)
+            if len(kept_rev) < min_tail_messages:
+                char_budget = max(400, (tail_budget - tail_used) * 4)
+                item = _trim_content(item, char_budget)
+                need = message_tokens(item)
+            elif kept_rev:
+                break
+            else:
+                item = _trim_content(item, max(400, tail_budget * 4))
+                need = message_tokens(item)
         kept_rev.append(item)
         tail_used += need
 
@@ -270,4 +284,6 @@ def trim_seed_from_cursor(body: dict, env: dict | None = None) -> list[Message]:
 
     env = env or load_env()
     seed = seed_messages_from_cursor(body)
-    return trim_messages(seed, context_input_budget(env))
+    budget = context_input_budget(env)
+    min_tail = int(env.get("ICR_SEED_MIN_MESSAGES", "12"))
+    return trim_conversation_tail(seed, budget, min_tail_messages=min_tail)

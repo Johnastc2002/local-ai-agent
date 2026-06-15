@@ -31,8 +31,6 @@ from gateway.icr_plan import (
     enrich_body_with_icr,
     finish_icr,
     resume_icr_state,
-    run_icr_answer,
-    run_icr_answer_stream,
     run_icr_plan,
     run_icr_plan_stream,
     run_icr_state,
@@ -122,13 +120,8 @@ async def chat_completions(request: Request):
                     if body.get("stream"):
                         return StreamingResponse(iter(stream_chunks(completion)), media_type="text/event-stream")
                     return JSONResponse(completion)
-                if is_agent_request(body):
-                    enriched = enrich_body_with_icr(body, state)
-                    return await _forward_chat(enriched, request)
-                completion = finish_icr(body, state, None)
-                if body.get("stream"):
-                    return StreamingResponse(iter(stream_text_chunks(completion)), media_type="text/event-stream")
-                return JSONResponse(completion)
+                enriched = enrich_body_with_icr(body, state)
+                return await _forward_chat(enriched, request)
             except IcrPaused as paused:
                 return _paused_response(body, paused.completion)
         return await _forward_chat(body, request)
@@ -149,11 +142,10 @@ async def chat_completions(request: Request):
             enriched = enrich_body_with_icr(body, state)
             return await _forward_chat(enriched, request)
 
-        if body.get("stream"):
-            chunks = await asyncio.to_thread(run_icr_answer_stream, body)
-            return StreamingResponse(iter(chunks), media_type="text/event-stream")
-        completion = await asyncio.to_thread(run_icr_answer, body)
-        return JSONResponse(completion)
+        # Ask — same as Cursor: ICR enriches, vLLM answers with full thread history
+        state = await asyncio.to_thread(run_icr_state, body)
+        enriched = enrich_body_with_icr(body, state)
+        return await _forward_chat(enriched, request)
     except IcrPaused as paused:
         return _paused_response(body, paused.completion)
     except Exception as exc:

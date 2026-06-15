@@ -50,10 +50,34 @@ class GatewayRoutingTest(unittest.TestCase):
         self.assertFalse(is_user_turn(body))
 
     def test_icr_context_injected(self):
-        msgs = [{"role": "user", "content": "hello"}]
+        msgs = [
+            {"role": "user", "content": "first question"},
+            {"role": "assistant", "content": "first answer"},
+            {"role": "user", "content": "follow up"},
+        ]
         out = inject_icr_context(msgs, "refined plan text")
-        self.assertIn("refined plan text", out[-1]["content"])
-        self.assertIn("[ICR refined context]", out[-1]["content"])
+        self.assertEqual(len(out), 4)
+        self.assertEqual(out[-1]["content"], "follow up")
+        self.assertEqual(out[-2]["role"], "developer")
+        self.assertIn("refined plan text", out[-2]["content"])
+        self.assertIn("[ICR refined context]", out[-2]["content"])
+
+    def test_trim_keeps_history_after_icr(self):
+        from gateway.context_trim import trim_conversation_tail
+        from gateway.router import inject_icr_context
+
+        msgs = [
+            {"role": "system", "content": "rules"},
+            {"role": "user", "content": "message one"},
+            {"role": "assistant", "content": "reply one"},
+            {"role": "user", "content": "message two"},
+        ]
+        icr = "x" * 50_000
+        enriched = inject_icr_context(msgs, icr)
+        out = trim_conversation_tail(enriched, budget_tokens=4000, min_tail_messages=4)
+        roles = [m["role"] for m in out]
+        self.assertIn("assistant", roles)
+        self.assertEqual(roles.count("user"), 2)
 
 
 if __name__ == "__main__":

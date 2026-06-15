@@ -13,6 +13,7 @@ from llm import content_to_text, load_env
 from gateway.cursor_protocol import find_plan_tool, is_agent_request as _is_agent_request
 
 ICR_CONTEXT_MARKER = "[ICR refined context]"
+ICR_MAX_CHARS = 8000
 
 Message = dict[str, Any]
 
@@ -28,16 +29,22 @@ def is_agent_request(body: dict) -> bool:
 
 
 def inject_icr_context(messages: list[Message], icr_text: str) -> list[Message]:
+    """
+    Attach ICR output as a developer message before the latest user turn.
+    Do NOT append to the last user message — that bloats it and trim drops prior turns.
+    """
     out: list[Message] = [dict(m) for m in messages]
+    icr = icr_text.strip()
+    if len(icr) > ICR_MAX_CHARS:
+        icr = icr[:ICR_MAX_CHARS] + "\n[... ICR truncated ...]"
+    block = f"{ICR_CONTEXT_MARKER}\n{icr}"
+
+    insert_at = len(out)
     for i in range(len(out) - 1, -1, -1):
-        if out[i].get("role") != "user":
-            continue
-        msg = dict(out[i])
-        existing = content_to_text(msg.get("content")).strip()
-        block = f"---\n{ICR_CONTEXT_MARKER}\n{icr_text.strip()}"
-        msg["content"] = f"{existing}\n\n{block}" if existing else block
-        out[i] = msg
-        break
+        if out[i].get("role") == "user":
+            insert_at = i
+            break
+    out.insert(insert_at, {"role": "developer", "content": block})
     return out
 
 

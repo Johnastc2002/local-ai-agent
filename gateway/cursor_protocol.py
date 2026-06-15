@@ -89,21 +89,8 @@ def icr_request_options(body: dict) -> dict[str, Any]:
 
 
 def seed_messages_from_cursor(body: dict) -> list[Message]:
-    """
-    Keep Cursor's context: system rules, @files, codebase snippets, user prompt.
-    ICR session stores assistant/tool turns from pause/resume separately.
-    """
-    out: list[Message] = []
-    for msg in body.get("messages") or []:
-        role = msg.get("role")
-        if role in ("system", "user", "developer"):
-            out.append(dict(msg))
-    if not any(m.get("role") == "user" for m in out):
-        for msg in reversed(body.get("messages") or []):
-            if msg.get("role") == "user":
-                out.append(dict(msg))
-                break
-    return out
+    """Full Cursor thread — system, user, assistant, tool (for ICR + conversation key)."""
+    return [dict(m) for m in body.get("messages") or []]
 
 
 def extract_task(body: dict) -> str:
