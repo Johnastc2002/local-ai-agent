@@ -44,12 +44,17 @@ def _parse_body(body: bytes | None) -> dict:
 
 async def chat_completion_json(body: dict, request: Request) -> dict:
     """Non-streaming completion from vLLM (reliable for localhost upstream)."""
-    payload = {**body, "stream": False}
+    from gateway.context_trim import trim_body_for_vllm
+
+    payload = trim_body_for_vllm({**body, "stream": False})
     url = f"{vllm_upstream()}/v1/chat/completions"
     timeout = httpx.Timeout(600.0, connect=30.0)
     async with httpx.AsyncClient(timeout=timeout) as client:
         resp = await client.post(url, headers=_headers(request), json=payload)
-        resp.raise_for_status()
+        if resp.status_code >= 400:
+            detail = resp.text[:2000]
+            log.error("vLLM %s: %s", resp.status_code, detail)
+            raise RuntimeError(f"vLLM HTTP {resp.status_code}: {detail}")
         return resp.json()
 
 
@@ -98,6 +103,7 @@ async def forward_chat_completion(body: dict, request: Request) -> Response:
     Avoids fragile long-lived passthrough streams (RunPod proxy / client timeouts).
     """
     from gateway.router import stream_chunks, stream_text_chunks
+    from gateway.context_trim import trim_body_for_vllm
 
     want_stream = bool(body.get("stream"))
     if want_stream:
@@ -109,6 +115,6 @@ async def forward_chat_completion(body: dict, request: Request) -> Response:
             chunks = stream_text_chunks(completion)
         return StreamingResponse(iter(chunks), media_type="text/event-stream")
 
-    payload = json.dumps({**body, "stream": False}).encode()
+    payload = json.dumps(trim_body_for_vllm({**body, "stream": False})).encode()
     return await forward("POST", "/v1/chat/completions", request, payload)
 

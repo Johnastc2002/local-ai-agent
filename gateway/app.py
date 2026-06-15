@@ -130,11 +130,17 @@ async def chat_completions(request: Request):
     except IcrPaused as paused:
         return _paused_response(body, paused.completion)
     except Exception as exc:
-        log.error("ICR pipeline failed: %s\n%s", exc, traceback.format_exc())
-        print(f"ICR pipeline failed: {exc}", file=sys.stderr)
+        detail = str(exc)
+        if hasattr(exc, "response") and exc.response is not None:
+            try:
+                detail = exc.response.text[:2000]
+            except Exception:
+                pass
+        log.error("ICR pipeline failed: %s\n%s", detail, traceback.format_exc())
+        print(f"ICR pipeline failed: {detail}", file=sys.stderr)
         traceback.print_exc()
         return JSONResponse(
-            {"error": {"message": f"ICR pipeline failed: {exc}", "type": "icr_error"}},
+            {"error": {"message": f"ICR pipeline failed: {detail}", "type": "icr_error"}},
             status_code=502,
         )
 
