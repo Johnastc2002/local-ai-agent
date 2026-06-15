@@ -42,7 +42,8 @@ def load_env() -> dict[str, str]:
     for key in (
         "MODEL_NAME", "RUNPOD_API_KEY", "ICR_REPO", "CURSOR_PLAN_MAX_ITERATIONS",
         "REFINE_MEMORY_EVERY", "REFINE_POOL_SIZE", "REFINE_MAX_TOKENS",
-        "REFINE_PYTHON_TOOLS", "REFINE_TEMPERATURE", "REFINE_TOP_P",
+        "REFINE_PYTHON_TOOLS", "REFINE_CODEBASE_TOOLS", "REFINE_TEMPERATURE", "REFINE_TOP_P",
+        "CODEBASE_ROOT", "CODEBASE_HOST_ROOT",
     ):
         if key not in env and os.environ.get(key):
             env[key] = os.environ[key]

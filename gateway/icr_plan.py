@@ -6,12 +6,14 @@ from __future__ import annotations
 from datetime import datetime
 from pathlib import Path
 
-from attachments import build_initial_user_content, load_seed_images
+from codebase_paths import codebase_root
+from codebase_tool import codebase_tools_enabled
+from attachments import load_seed_images
+from gateway.cursor_context import build_icr_user_content, harvest_paths
 from gateway.router import (
     build_plan_arguments,
     completion_with_content,
     completion_with_plan_tool,
-    extract_attach_paths,
     extract_task,
     inject_icr_context,
     stream_chunks,
@@ -31,8 +33,15 @@ def run_icr_state(body: dict) -> RefineState:
         raise ValueError("No user message in request")
 
     env = load_env()
-    attach = extract_attach_paths(body.get("messages") or [])
-    attach_paths = [Path(p) for p in attach]
+    if codebase_tools_enabled(env) and codebase_root(env) is None:
+        raise ValueError(
+            "CODEBASE_ROOT is missing on pod. Clone your project, e.g.\n"
+            "  git clone <repo> /workspace/bobot-xs-v1\n"
+            "Set CODEBASE_ROOT and CODEBASE_HOST_ROOT in .env"
+        )
+
+    messages = body.get("messages") or []
+    attach_paths = harvest_paths(messages, env)
 
     max_iterations = int(env.get("CURSOR_PLAN_MAX_ITERATIONS", "8"))
     memory_every = int(env.get("REFINE_MEMORY_EVERY", "10"))
@@ -42,7 +51,7 @@ def run_icr_state(body: dict) -> RefineState:
     max_tokens = int(env.get("REFINE_MAX_TOKENS", "8192"))
 
     run_dir = RUNS / datetime.now().strftime("%Y%m%d-%H%M%S")
-    initial_content = build_initial_user_content(task, attach_paths)
+    initial_content = build_icr_user_content(task, messages, env)
     seed_images = load_seed_images(attach_paths)
     prompts = load_icr_prompts()
 

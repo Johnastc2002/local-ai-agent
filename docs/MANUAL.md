@@ -68,7 +68,27 @@ cd /workspace/local-ai-agent
 bash scripts/install-on-pod.sh
 ```
 
-The script creates `.env` automatically, clones ICR prompts, installs vLLM, starts both services.
+The script creates `.env`, clones ICR prompts, clones **your codebase** (see §3b), installs vLLM, starts both services.
+
+### 3b. Codebase on pod (required)
+
+ICR agents use `read_file`, `grep`, and `list_dir` on the pod — same idea as Opus reading your repo in Cursor.
+
+On pod `.env`:
+
+```bash
+CODEBASE_ROOT=/workspace/bobot-xs-v1
+CODEBASE_HOST_ROOT=/Users/tough/hobby/bobot-xs-v1   # Mac paths from Cursor → pod
+CODEBASE_GIT_URL=https://github.com/you/bobot-xs-v1.git   # optional auto-clone
+```
+
+Or clone manually once:
+
+```bash
+git clone https://github.com/you/bobot-xs-v1.git /workspace/bobot-xs-v1
+```
+
+Without this, ICR runs blind and **will fail** with `CODEBASE_ROOT is missing`.
 
 **First boot:** model download takes **5–15 minutes**. Watch:
 

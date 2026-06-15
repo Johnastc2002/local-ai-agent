@@ -1,6 +1,8 @@
 #!/usr/bin/env python3
 """
-Call a contextual agent (mirrors ICR callContextualAgent + optional Python tool loop).
+Call a contextual agent (mirrors ICR callContextualAgent + tool loop).
+
+Tools: read_file / grep / list_dir (codebase) + python_virtual_filesystem.
 """
 
 from __future__ import annotations
@@ -10,16 +12,20 @@ import os
 from dataclasses import dataclass, field
 from typing import Any
 
+from codebase_tool import (
+    CODEBASE_TOOL_DEFS,
+    CODEBASE_TOOL_NAMES,
+    CodebaseTools,
+    codebase_tools_enabled,
+    format_codebase_result,
+)
 from llm import (
     Message,
-    assistant_message,
     chat_completions,
     content_to_text,
     new_tool_call_id,
     parse_assistant_message,
-    text_message,
     tool_message,
-    user_message,
 )
 from python_tool import (
     PYTHON_TOOL_DEF,
@@ -44,6 +50,26 @@ def _python_tools_enabled(env: dict[str, str]) -> bool:
     return val.lower() in ("1", "true", "yes", "on")
 
 
+def _tools_for_agent(env: dict[str, str]) -> list[dict]:
+    tools: list[dict] = []
+    if codebase_tools_enabled(env):
+        tools.extend(CODEBASE_TOOL_DEFS)
+    if _python_tools_enabled(env):
+        tools.append(PYTHON_TOOL_DEF)
+    return tools
+
+
+def _parse_tool_args(raw: Any) -> dict:
+    if isinstance(raw, dict):
+        return raw
+    if isinstance(raw, str):
+        try:
+            return json.loads(raw) if raw.strip() else {}
+        except json.JSONDecodeError:
+            return {}
+    return {}
+
+
 def call_contextual_agent(
     agent_name: str,
     messages: list[Message],
@@ -57,14 +83,13 @@ def call_contextual_agent(
     max_tokens: int = 8192,
     env: dict[str, str] | None = None,
 ) -> AgentCallResult:
-    from llm import load_env
+    from llm import assistant_message, chat, load_env
 
     env = env or load_env()
     working = list(messages)
+    tools = _tools_for_agent(env)
 
-    if not _python_tools_enabled(env):
-        from llm import chat
-
+    if not tools:
         text = chat(
             working,
             system=system_prompt,
@@ -78,7 +103,7 @@ def call_contextual_agent(
         return AgentCallResult(text=text, prompt_text=text, final_text=text, loop_messages=loop)
 
     sandbox = PythonSandbox(session_id)
-    tools = [PYTHON_TOOL_DEF]
+    codebase = CodebaseTools(env) if codebase_tools_enabled(env) else None
     transcript_parts: list[str] = []
     loop_start = len(working)
     final_text = ""
@@ -111,49 +136,43 @@ def call_contextual_agent(
 
         for tc in tool_calls:
             fn = tc.get("function") or {}
-            if fn.get("name") != PYTHON_TOOL_NAME:
-                working.append(tool_message(
-                    tc.get("id") or new_tool_call_id(),
-                    f"Unknown tool: {fn.get('name')}",
-                    name=fn.get("name"),
-                ))
-                continue
+            name = fn.get("name") or ""
+            args = _parse_tool_args(fn.get("arguments"))
+            tc_id = tc.get("id") or new_tool_call_id()
 
-            args_raw = fn.get("arguments") or "{}"
-            try:
-                args = json.loads(args_raw) if isinstance(args_raw, str) else args_raw
+            if name == PYTHON_TOOL_NAME:
                 code = str(args.get("code", "")).strip()
-            except json.JSONDecodeError:
-                code = ""
+                if should_seed and seed_images:
+                    sandbox.seed_images(seed_images)
+                    should_seed = False
+                if not code:
+                    result = {
+                        "ok": False,
+                        "exitCode": 1,
+                        "stdout": "",
+                        "stderr": "",
+                        "error": "Missing or invalid Python code in tool call.",
+                        "durationMs": 0,
+                    }
+                else:
+                    result = sandbox.execute(code)
+                tool_content = format_tool_result(result)
+                transcript_parts.append(f"```python\n{code}\n```\n\n{tool_content}")
 
-            if should_seed and seed_images:
-                sandbox.seed_images(seed_images)
-                should_seed = False
+            elif name in CODEBASE_TOOL_NAMES and codebase is not None:
+                result = codebase.dispatch(name, args)
+                tool_content = format_codebase_result(result)
+                transcript_parts.append(f"[{name}]\n{tool_content}")
 
-            if not code:
-                result = {
-                    "ok": False,
-                    "exitCode": 1,
-                    "stdout": "",
-                    "stderr": "",
-                    "error": "Missing or invalid Python code in tool call.",
-                    "durationMs": 0,
-                }
             else:
-                result = sandbox.execute(code)
+                tool_content = f"Unknown or unavailable tool: {name}"
+                transcript_parts.append(tool_content)
 
-            tool_content = format_tool_result(result)
-            transcript_parts.append(f"```python\n{code}\n```\n\n{tool_content}")
-
-            working.append(tool_message(
-                tc.get("id") or new_tool_call_id(),
-                tool_content,
-                name=PYTHON_TOOL_NAME,
-            ))
+            working.append(tool_message(tc_id, tool_content, name=name))
 
     if not final_text:
         raise RuntimeError(
-            f"{agent_name} exceeded {MAX_TOOL_TURNS} Python tool turns without a final response."
+            f"{agent_name} exceeded {MAX_TOOL_TURNS} tool turns without a final response."
         )
 
     display = "\n\n".join(transcript_parts).strip() or final_text

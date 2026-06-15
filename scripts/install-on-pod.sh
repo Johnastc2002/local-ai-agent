@@ -41,6 +41,23 @@ source "$ENV_FILE"
 source "$PROFILE_FILE"
 set +a
 
+# Codebase on pod (ICR agents read/grep this — required for real planning)
+CODEBASE_DIR="${CODEBASE_ROOT:-/workspace/bobot-xs-v1}"
+if [[ -n "${CODEBASE_GIT_URL:-}" ]] && [[ ! -d "$CODEBASE_DIR/.git" ]]; then
+  echo "Cloning codebase → $CODEBASE_DIR"
+  git clone --depth 1 "$CODEBASE_GIT_URL" "$CODEBASE_DIR"
+fi
+if [[ ! -d "$CODEBASE_DIR" ]]; then
+  echo ""
+  echo "WARN: Codebase missing at $CODEBASE_DIR"
+  echo "      ICR cannot read your project. Either:"
+  echo "        git clone <your-repo> $CODEBASE_DIR"
+  echo "      or set CODEBASE_GIT_URL in .env and re-run install."
+  echo ""
+else
+  echo "Codebase: $CODEBASE_DIR"
+fi
+
 export ICR_REPO_HOST="$ICR_HOST"
 export ICR_REPO="$ICR_HOST"
 export GATEWAY_ON_POD=1

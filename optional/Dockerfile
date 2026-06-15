@@ -10,7 +10,8 @@ COPY requirements.txt .
 RUN pip install --no-cache-dir -r requirements.txt
 
 COPY gateway/ ./gateway/
-COPY llm.py agent_call.py icr_prompts.py python_tool.py attachments.py refine.py ./
+COPY llm.py agent_call.py icr_prompts.py python_tool.py attachments.py refine.py \
+     codebase_tool.py codebase_paths.py ./
 
 ENV GATEWAY_ON_POD=1
 ENV VLLM_UPSTREAM=http://vllm:8000
