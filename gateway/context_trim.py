@@ -98,6 +98,9 @@ def trim_agent_history(
         used += need
     kept_rev.reverse()
     return kept_rev if kept_rev else [dict(messages[-1])]
+
+
+def trim_seed_from_cursor(body: dict, env: dict | None = None) -> list[Message]:
     from gateway.cursor_protocol import seed_messages_from_cursor
 
     env = env or load_env()
