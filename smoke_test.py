@@ -10,6 +10,7 @@ Smoke-test vLLM and/or ICR gateway on RunPod.
 from __future__ import annotations
 
 import argparse
+import http.client
 import json
 import os
 import sys
@@ -19,6 +20,16 @@ from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent
 ENV_FILE = ROOT / ".env"
+
+# RunPod proxy sits behind Cloudflare; blocks Python-urllib User-Agent (403 / 1010)
+DEFAULT_HEADERS = {"User-Agent": "curl/8.0"}
+
+
+def _request_headers(api_key: str, extra: dict[str, str] | None = None) -> dict[str, str]:
+    headers = {**DEFAULT_HEADERS, "Authorization": f"Bearer {api_key}"}
+    if extra:
+        headers.update(extra)
+    return headers
 
 
 def load_env() -> dict[str, str]:
@@ -72,7 +83,7 @@ def gateway_base(env: dict[str, str]) -> str:
 
 
 def get_json(url: str, api_key: str, timeout: int = 30) -> tuple[int, str]:
-    req = urllib.request.Request(url, headers={"Authorization": f"Bearer {api_key}"})
+    req = urllib.request.Request(url, headers=_request_headers(api_key))
     try:
         with urllib.request.urlopen(req, timeout=timeout) as resp:
             return resp.status, resp.read().decode()
@@ -88,20 +99,20 @@ def post_json(url: str, api_key: str, payload: dict, stream: bool = False, timeo
         url,
         data=data,
         method="POST",
-        headers={
-            "Authorization": f"Bearer {api_key}",
-            "Content-Type": "application/json",
-        },
+        headers=_request_headers(api_key, {"Content-Type": "application/json"}),
     )
     try:
         with urllib.request.urlopen(req, timeout=timeout) as resp:
             if stream:
                 chunks = []
-                while True:
-                    chunk = resp.read(4096)
-                    if not chunk:
-                        break
-                    chunks.append(chunk.decode(errors="replace"))
+                try:
+                    while True:
+                        chunk = resp.read(4096)
+                        if not chunk:
+                            break
+                        chunks.append(chunk.decode(errors="replace"))
+                except http.client.IncompleteRead:
+                    pass
                 return resp.status, "".join(chunks)
             return resp.status, resp.read().decode()
     except urllib.error.HTTPError as e:

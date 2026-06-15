@@ -27,6 +27,8 @@ from typing import Any
 ROOT = Path(__file__).resolve().parent
 ENV_FILE = ROOT / ".env"
 RUNPOD_REST = "https://rest.runpod.io/v1"
+# RunPod pod proxy is behind Cloudflare; blocks Python-urllib User-Agent (403 / 1010)
+PROXY_HEADERS = {"User-Agent": "curl/8.0"}
 
 
 def load_env() -> dict[str, str]:
@@ -162,7 +164,7 @@ def probe_models(url: str, api_key: str, timeout: int = 10) -> tuple[int, str]:
     req = urllib.request.Request(
         f"{url}/v1/models",
         method="GET",
-        headers={"Authorization": f"Bearer {api_key}"},
+        headers={**PROXY_HEADERS, "Authorization": f"Bearer {api_key}"},
     )
     try:
         with urllib.request.urlopen(req, timeout=timeout) as resp:
@@ -177,7 +179,7 @@ def probe_health(url: str, api_key: str, timeout: int = 10) -> tuple[int, str]:
     req = urllib.request.Request(
         f"{url}/health",
         method="GET",
-        headers={"Authorization": f"Bearer {api_key}"},
+        headers={**PROXY_HEADERS, "Authorization": f"Bearer {api_key}"},
     )
     try:
         with urllib.request.urlopen(req, timeout=timeout) as resp:
